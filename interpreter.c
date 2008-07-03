@@ -62,7 +62,8 @@ int main(int argc, char *argv[])
   static long instructions[] = {
     (long)&&PUSH, (long)&&POP,
     (long)&&SWAP, (long)&&DUP, 
-    
+    (long)&&ROT,
+
     /* Control flow */
     (long)&&CALL,
     (long)&&RET,  (long)&&JMP,  
@@ -71,7 +72,7 @@ int main(int argc, char *argv[])
     /* Arithmetic */
     (long)&&PLUS, (long)&&MUL, 
     (long)&&SHL,  (long)&&SHR, 
-    (long)&&BOR,
+    (long)&&BOR,  (long)&&BAND,
     
     /* Reading and writing memory */
     (long)&&STOR, (long)&&LOAD,
@@ -103,6 +104,14 @@ int main(int argc, char *argv[])
 	      }while(0)
 	      );
   INSTRUCTION(DUP, STACK_PUSH(STACK(0)));
+  INSTRUCTION(ROT,
+	      do{
+		long tmp = STACK(0);
+		STACK(0) = STACK(1);
+		STACK(1) = STACK(2);
+		STACK(2) = tmp;
+	      }while(0)
+	      );
 
   /* flow control */
   INSTRUCTION(CALL,
@@ -128,9 +137,10 @@ int main(int argc, char *argv[])
   INSTRUCTION(PLUS, STACK(1) +=  STACK(0); STACK_POP());
   INSTRUCTION(MUL,  STACK(1) *=  STACK(0); STACK_POP());
   INSTRUCTION(SHL,  STACK(1) <<= STACK(0); STACK_POP());
-  INSTRUCTION(BOR,  STACK(1) |=  STACK(0); STACK_POP());
   INSTRUCTION(SHR,  STACK(1) >>= STACK(0); STACK_POP());
-
+  INSTRUCTION(BOR,  STACK(1) |=  STACK(0); STACK_POP());
+  INSTRUCTION(BAND, STACK(1) &=  STACK(0); STACK_POP());
+  
   /* memory access */
   INSTRUCTION(STOR, do{
       memory[STACK(1)] = htonl(STACK(0));

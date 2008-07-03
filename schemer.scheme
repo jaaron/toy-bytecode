@@ -1,6 +1,180 @@
 (define isspace (lambda (c) (or (char=? c #\space ) (or (char=? c #\tab) (char=? c #\newline)))))
 (define next-non-ws (lambda () (lambda (z) (if (isspace z) (next-non-ws) z)) (read-char)))
 
+(define builtin-forms
+  '(
+    ("lambda" . compile-lambda)
+    ("if"     . compile-if)
+    ("cons"   . compile-cons)
+    ("car"    . compile-car)
+    ("cdr"    . compile-cdr)
+    )
+)
+
+(define heap-ptr 1024)
+(define top-level-scope-ptr 1025)
+
+(define state '( ()      ; variable bindings
+		 ()      ; top level scope bindings
+		 0       ; instruction pointer		     
+		 )
+  )
+
+(define state-environment         (lambda () (car state)))
+(define state-globals             (lambda () (car (cdr state))))
+(define state-instruction-pointer (lambda () (car (cdr (cdr state)))))
+
+(define increment-ip (lambda ()
+  (set-car! (cdr (cdr state)) (+ 1 (state-instruction-pointer)))))
+
+(define append-instruction
+  (lambda (ins)
+    (begin 
+      (display ins)
+      (display " ")
+      (increment-ip)
+    )
+))
+  
+(define append-instructions 
+  (lambda (inss)
+    (if (null? inss) '()
+	(begin
+	  (append-instruction (car inss))
+	  (append-instructions (cdr inss))))))
+
+; the high bit of each word is a type-mask
+; if it is set, then the word is  a pointer.
+(define type-mask "0x7fffffff")
+(define ptr-flag "0x10000000")
+
+(define assembly-car  (lambda () (append-instructions 
+				 (list ("PUSH" type-mask
+					"BAND" "LOAD")))))
+
+(define assembly-cdr  (lambda () (append-instructions 
+				 (list ("PUSH" type-mask
+					"BAND"
+					"PUSH" "1" 
+					"ADD" 
+					"LOAD")))))
+
+(define assembly-cons (lambda ()
+			(append-instructions  
+			 (list "PUSH" heap-ptr  "LOAD" ; load the heap pointer				       
+			       "DUP" "ROT"      "STOR" ; store the car to the target
+			       "DUP"                   ; duplicate the original heap pointer
+			       "PUSH" "1"       "ADD"  ; increment heap pointer for the cdr
+			       "ROT"                   ; push the original hp down, bring the cdr up
+			       "STOR"                  ; store the cdr
+			       "DUP"                   ; duplicate original hp again
+			       "PUSH" "2"              ; calculate new hp				       
+			       "PUSH" heap-ptr  "SWAP" ; push the hp address
+			       "STOR"                  ; store the new heap pointer
+			       "PUSH" ptr-flag  "BOR"  ; add the pointer flag to the return value
+			       ))))
+
+(define assembly-env-cell
+  (lambda (depth idx)
+    (if (= depth 0) 
+	(if (= idx 0)
+	    (assembly-car)
+	    (begin
+	      (assembly-cdr)
+	      (assembly-env-cell 0 (- idx 1))))
+	(assembly-cdr)
+	(assembly-env-cell (- depth 1) idx)
+	)
+    )
+  )
+
+(define compile-car (lambda (l) (begin 
+				  (compile-sexp (car (cdr l)))
+				  (assembly-car)
+				  )
+			    )
+  )
+
+(define compile-cdr (lambda (l) (begin 
+				  (compile-sexp (car (cdr l)))
+				  (assembly-cdr)
+				  )
+			    )
+  )
+
+
+(define compile-cons (lambda (l) (begin
+				   (compile-sexp (car (cdr l)))
+				   (compile-sexp (car (cdr (cdr l))))
+				   (assembly-cons)
+				   )))
+
+
+(define compile-nil      (lambda () (append-instructions (list "PUSH" "0"))))
+(define compile-constant (lambda (c) ((append-instructions (list "PUSH" c)))))
+
+(define lookup-reference-offset 
+  (lambda (r e cont)
+    (if (null? e) (cont #f)
+	(if (string= r (car e))
+	    (cont 0)
+	    (lookup-reference-offset r (cdr e)
+				     (lambda (z) 
+				       (cont (if z (+ z 1) z))))))))
+
+
+(define lookup-reference-depth
+  (lambda (r e cont)
+    (if (null? e) #f
+	(lookup-reference-offset r (car e) 
+				 (lambda (z) 
+				   (cont 
+				    (if z 
+					(cons 0 z)
+					(lookup-reference-depth r (cdr e) 
+								(lambda (w) 
+								  (if w 
+								      (cons (+ (car w) 1) (cdr w))
+								      #f))))))))))
+
+(define compile-reference (lambda (r)
+			    (lambda (i) 
+			      (if i 
+				  (begin
+				    (append-instructions (list "PUSH" env-ptr "LOAD"))
+				    (assembly-env-cell (fst i) (snd i)))
+				  ;  hmm, this better be a global reference.
+				  (append-instructions 
+				    (list "PUSH" (string-append "@" r) "CALL"))
+				  )
+			      ) 
+			    (lookup-reference r (state-environment))))
+
+(define compile-atom (lambda (x) (if (is-number? x) 
+				     (compile-constant x) 
+				     (if (string=? "nil" x) 
+					 (compile-nil)
+					 (compile-reference x)))))
+
+(define compile-lambda 
+  (lambda (l)
+    (compile-list (car (cdr (cdr l))) 
+		  (state-push-vars (car (cdr l))))))
+
+(define compile-define
+  (lambda (l)
+    (begin
+      (append-instruction (string-append ":" (car (cdr l)) ))
+      (compile-sexp (car (cdr (cdr l))))
+      )
+    )
+)
+
+(define compile-sexp 
+  (lambda (s) 
+    (if (list? s) (compile-list s) 
+	(compile-atom s))))
+
 (define read-atom-helper (lambda (ch cont)
   (if (or (isspace ch) (char=? ch #\) ))
       (cont  (cons #f ch) ) 
