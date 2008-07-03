@@ -1,0 +1,141 @@
+# Labels are fully supported
+# :label defines a label
+# @label is the address of the label
+# and 
+# >label is 2 less than the offset of the
+# label from the current location. This is 
+# for relative jumps so that:
+#    PUSH >label
+#    JMP
+# will end up in the right place (since the 
+# JMP computes its target as an offset from 
+# the pc at the time JMP is evaluated, and the
+# pc is incremented before the JMP is evaluated).
+
+PUSH @main
+CALL
+END
+
+# base = 4
+:factorial
+SWAP        # get the argument 
+DUP         # duplicate 
+PUSH >factorial_escape # 9
+JZ          # jump to the escape condition 
+DUP 
+PUSH -1 
+ADD        # subtract the one 
+PUSH @factorial
+CALL       # recursive call 
+MUL         # multiply by n 
+RET         # return 
+			   
+# factoral+14: escape case 
+:factorial_escape
+POP     # pop the zero 
+PUSH 1  # push a one 
+RET     # and return  
+
+# factorial + 18 = 22
+# readS 
+# reads a newline terminated string into an array
+# of packed characters  argument is address at which
+# to store the string. 
+:readS
+SWAP # get the argument 
+DUP  # duplicate for return value 
+
+:read_loop
+DUP  # duplicate for subsequent storing 
+
+# readS + 3
+# get the first character of 
+# in the packed word 
+GETC
+DUP
+PUSH -10
+ADD
+PUSH >read_escape1 # 43 # read a \n store and exit
+JZ
+PUSH  24 
+SHL
+
+# readS+14:
+# get the second character of the packet word 
+GETC 
+DUP
+PUSH -10
+ADD
+PUSH >read_escape2 # 38 # read a \n
+JZ      # do the pack store and exit 
+PUSH 16
+SHL
+BOR
+
+# readS + 26:
+# get the third chracter 
+GETC
+DUP
+PUSH -10
+ADD
+PUSH >read_escape2 # 26 # read a \n
+JZ      # do the pack store and exit 
+PUSH 8
+SHL
+BOR
+
+# readS + 38:
+# get the fourth character 
+GETC
+DUP
+PUSH -10
+ADD
+PUSH >read_escape2 # 14 # read a \n
+JZ      # do the store and exit  
+BOR
+STOR
+PUSH 1
+ADD
+PUSH >read_loop
+JMP     # jump to the top of loop 
+			   
+# readS + 54: 
+# we were trying to read the first
+# byte of the a new word but we got 
+# a \n so pop the \n and push a 0
+:read_escape1
+POP
+PUSH 0
+STOR
+POP 
+RET
+
+# readS + 60:
+# we read a \n and the top of stack has a 
+# word with the null byte that we need to store
+:read_escape2
+POP
+STOR
+POP  # pop the duplicate storage address
+RET 
+
+# readS + 64 = 21 + 64 = 86 
+
+# read a string and print it 
+:main
+PUSH 62 # '>'
+PCHR
+PUSH 32 # ' '
+PCHR
+PUSH 1002
+PUSH @readS
+CALL 
+PSTR
+
+# calculate factorial of the argument
+PUSH 5 
+PUSH @factorial
+CALL
+PINT
+PUSH 0 # function have to return a value!
+RET

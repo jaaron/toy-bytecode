@@ -1,0 +1,48 @@
+(define isspace (lambda (c) (or (char=? c #\space ) (or (char=? c #\tab) (char=? c #\newline)))))
+(define next-non-ws (lambda () (lambda (z) (if (isspace z) (next-non-ws) z)) (read-char)))
+
+(define read-atom-helper (lambda (ch cont)
+  (if (or (isspace ch) (char=? ch #\) ))
+      (cont  (cons #f ch) ) 
+      (read-atom-helper (read-char) (lambda (x)
+			       (cont 
+				(cons (if (car x)				    
+					  (cons ch (car x))
+					  (cons ch '())				    
+					  ) (cdr x))  )))
+      )
+  )
+  )
+
+(define read-atom (lambda (ch cont) 
+		    (read-atom-helper ch (lambda (x) 
+					   (cont (cons (list->string (car x)) 
+						       (cdr x)))))))
+
+
+(define read-list 
+  (lambda (atc cont)
+    (if (char=? (cdr atc) #\) )
+	(cont (cons (if (car atc) (cons (car atc) '()) '()) (next-non-ws) ))
+	(read-sexp (next-non-ws)
+		   (lambda (x)
+		     (read-list x
+				(lambda (y) 
+				  (cont (cons (cons (car atc) (car y)) (cdr y)))
+				  )
+				)
+		     )
+		   )
+	)
+    )
+  )
+
+  
+(define read-sexp (lambda (ch cont)
+		    (if (char=? ch #\( )
+			(read-atom (next-non-ws) (lambda (x) (read-list x cont)))
+			(read-atom ch cont)
+			)
+		    )
+  )
+  
