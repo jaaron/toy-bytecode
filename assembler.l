@@ -32,7 +32,7 @@ IDENT   [a-zA-Z_][a-zA-Z_0-9]*
 
 %%
 
-{X_NUM} {out_buffer[words++] = htonl(strtol(yytext, NULL, 16));}
+{X_NUM} {out_buffer[words++] = htonl(strtoul(yytext, NULL, 16));}
 {D_NUM} {out_buffer[words++] = htonl(strtol(yytext, NULL, 10));}
 
 ;;.*\n         {}
@@ -116,7 +116,7 @@ PSTR  {out_buffer[words++] = htonl(I_PSTR);}
 [[:space:]]*   {}
 <<EOF>>        { yyterminate(); }
 
-.              { fprintf(stderr, "Error: unexpected token: %s", yytext); exit(1);}
+.              { fprintf(stderr, "Error: unexpected token: %s after %d words\n", yytext, words); exit(1);}
 
 %%
 
@@ -124,7 +124,7 @@ int main(int argc, char *argv[])
 {
   int failure = 0;
   int i;
-  int output_filedes = argc > 1 ? open(argv[1], O_WRONLY) : STDOUT_FILENO;
+  int output_filedes = argc > 1 ? open(argv[1], O_WRONLY | O_CREAT) : STDOUT_FILENO;
   if(output_filedes < 0){
     printf("Failed to open output file.  Dying\n");
     exit(1);
@@ -147,6 +147,7 @@ int main(int argc, char *argv[])
     exit(1);
   }
   write(output_filedes, out_buffer, words*sizeof(long));
+  fprintf(stderr, "Wrote %d words\n", words);
   close(output_filedes);
   return 0;
 }

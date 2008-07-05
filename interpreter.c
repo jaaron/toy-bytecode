@@ -5,18 +5,39 @@
 #include "interpreter.h"
 
 /* Internal macros */
+#ifdef __GUARD_STACK__
+#define STACK(x) ({					\
+  long __tmp = x;					\
+  if(__tmp > STACK_HEIGHT()){				\
+  fprintf(stderr, "Invalid stack access at %ld\n",	\
+	  pc-memory);					\
+  exit(-1);						\
+  }							\
+  *(sp + 1 + __tmp);					\
+    })
+
+#define STACK_POP() if(!STACK_HEIGHT()){			\
+  fprintf(stderr, "Attempt to pop empty stack at %ld\n",	\
+	  pc-memory);						\
+  }else{							\
+  ++sp;								\
+  }
+
+#else
 #define STACK(x) *(sp+1+(x))
+
+/* stack pop changes the stack pointer,  do 
+   not use it in combination with any macro that 
+   accesses the stack pointer.  */
+#define STACK_POP() *( ++sp )
+
+#endif
 
 #define STACK_PUSH(x) do{			\
     long __tmp = x;				\
     *sp = __tmp;				\
     sp--;					\
   }while(0)
-
-/* stack pop changes the stack pointer,  do 
-   not use it in combination with any macro that 
-   accesses the stack pointer.  */
-#define STACK_POP() *( ++sp )
 #define STACK_HEIGHT() ((memory + MEM_SIZE-1) - sp)
 
 #define MEM_SIZE 4096
@@ -106,10 +127,10 @@ int main(int argc, char *argv[])
   INSTRUCTION(DUP, STACK_PUSH(STACK(0)));
   INSTRUCTION(ROT,
 	      do{
-		long tmp = STACK(0);
-		STACK(0) = STACK(1);
-		STACK(1) = STACK(2);
-		STACK(2) = tmp;
+		long tmp = STACK(0);		
+		STACK(0) = STACK(2);
+		STACK(2) = STACK(1);
+		STACK(1) = tmp;
 	      }while(0)
 	      );
 
