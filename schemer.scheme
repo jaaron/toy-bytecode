@@ -175,7 +175,7 @@
 ; Lookup functions,  find a particular atom in the environment
 (define lookup-reference-offset 
   (lambda (r e cont)
-    (if (null? e) (cont #f)
+    (if (null? e) (cont #f)	
 	(if (string= r (car e))
 	    (cont 0)
 	    (lookup-reference-offset r (cdr e)
@@ -280,8 +280,7 @@
        (assembly-cons)
        (cont)
        (append-instruction (string-append ":" label))
-       (compile-sexp (car (cdr (cdr l))) (cons (car (cdr l)) env) (lambda () '()) )
-       (assembly-funret)
+       (compile-sexp (car (cdr (cdr l))) (cons (car (cdr l)) env) (lambda () (assembly-funret)) )
        ) 
      (fresh-label))))
 
@@ -297,12 +296,11 @@
 
 (define compile-arguments
   (lambda (l env cont)
-    (if (null? l) (compile-nil l env cont)
-	(compile-sexp (car l) env
-		      (lambda ()
-			(compile-arguments (cdr l) env
+    (if (null? l) (compile-nil l env cont)     
+	(compile-arguments (cdr l) env
+			   (lambda ()
+			     (compile-sexp (car l) env
 					   (lambda ()
-					     (append-instruction "SWAP")
 					     (assembly-cons)
 					     (cont))))))))
 (define compile-list
@@ -373,7 +371,7 @@
 			       (cont 
 				(cons (if (car x)				    
 					  (cons ch (car x))
-					  (cons ch '())				    
+					  (cons ch '())	    
 					  ) (cdr x))  )))
       )
   )
@@ -409,8 +407,6 @@
 		    )
   )
   
-
 (define compiler-entry (lambda ()
 			 (read-sexp (next-non-ws) (lambda (s)
 						    (compile-prog (car s))))))
-								 
