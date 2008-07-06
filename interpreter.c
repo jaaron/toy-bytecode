@@ -128,9 +128,9 @@ int main(int argc, char *argv[])
   INSTRUCTION(ROT,
 	      do{
 		long tmp = STACK(0);		
-		STACK(0) = STACK(2);
-		STACK(2) = STACK(1);
-		STACK(1) = tmp;
+		STACK(0) = STACK(1);
+		STACK(1) = STACK(2);
+		STACK(2) = tmp;
 	      }while(0)
 	      );
 
@@ -150,8 +150,8 @@ int main(int argc, char *argv[])
 		STACK_POP();
 	      }while(0)
 	      );
-  INSTRUCTION(JMP, pc += STACK_POP());
-  INSTRUCTION(JZ,  pc += STACK(1) ? 0 : STACK(0); STACK_POP() ; STACK_POP() );
+  INSTRUCTION(JMP, pc = memory + STACK_POP());
+  INSTRUCTION(JZ,  pc = STACK(1) ? pc : memory + STACK(0); STACK_POP() ; STACK_POP() );
   INSTRUCTION(END, return 0);
 
   /* arithmetic */
@@ -164,7 +164,7 @@ int main(int argc, char *argv[])
   
   /* memory access */
   INSTRUCTION(STOR, do{
-      memory[STACK(1)] = htonl(STACK(0));
+      memory[STACK(0)] = htonl(STACK(1));
       STACK_POP();
       STACK_POP();
     }while(0)

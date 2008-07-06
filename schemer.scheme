@@ -19,9 +19,6 @@
     (list
      (cons "lambda" compile-lambda)
      (cons "if"     compile-if)
-     (cons "cons"   compile-cons)
-     (cons "car"    compile-car)
-     (cons "cdr"    compile-cdr)
      )
     )
 )
@@ -60,7 +57,7 @@
   (lambda (ins)
     (begin 
       (display ins)
-      (display " ")
+      (display "\n")
       (increment-ip)
     )
 ))
@@ -74,17 +71,87 @@
 	  (append-instructions (cdr inss))))))
 
 ; append assembly code for storing a value to the next free
-; heap cell
+; heap cell.
+; (val)  -> (hp*) , hp' = hp+1, heap[hp] = val
 (define store-to-heap (lambda ()
 			(append-instructions
-			 (list "PUSH" heap-ptr "LOAD" ; load the current heap pointer
-			       "DUP" "ROT" "STOR"     ; make sure stack goes (hp hp val) and store
-			       "DUP"                  ; save the address to which we stored
-			       "PUSH" "1" "ADD"       ; increment hp
-			       "PUSH" heap-ptr "SWAP" ; fetch hp address and fix stack to (hp &hp hp')
-			       "STOR"                 ; store new hp
+			 (list "PUSH" heap-ptr "LOAD" ; load the current heap pointer (val hp)
+			       "DUP"                  ; (val hp hp)
+			       "ROT"                  ; (hp val hp)
+			       "STOR"                 ; (hp) val is stored
+			       "DUP"                  ; (hp hp)
+			       "PUSH" "1" "ADD"       ; (hp (+ 1 hp)) 
+			       "PUSH" heap-ptr        ; (hp (+ 1 hp) &hp)
+			       "STOR"                 ; (hp) new heap pointer is stored
 			       "PUSH" ptr-flag "BOR"  ; mark top of stack as a pointer
 			       ))))
+
+			   
+; assembly for the primitive list functions car, cdr, and cons
+; (ptr*) -> ((car ptr))
+(define assembly-car  (lambda () (append-instructions 
+				  (list "PUSH" type-mask
+					"BAND" "LOAD"))))
+; (ptr*) -> ((cdr ptr))
+(define assembly-cdr  (lambda () (append-instructions 
+				  (list "PUSH" type-mask
+					"BAND"
+					"PUSH" "1" 
+					"ADD" 
+					"LOAD"))))
+
+; (cdr car) -> ((cons car cdr))
+(define assembly-cons (lambda ()
+			(append-instructions 
+			 (list "PUSH" heap-ptr       ; (cdr car &hp)
+			       "LOAD"                ; (cdr car hp)
+			       "DUP"                 ; (cdr car hp hp)
+			       "ROT"                 ; (cdr hp car hp)
+			       "STOR"                ; (cdr hp) car stored
+			       "DUP"                 ; (cdr hp hp)
+			       "PUSH" "1"            ; (cdr hp hp 1)
+			       "ADD"                 ; (cdr hp (+ hp 1))
+			       "SWAP"                ; (cdr (+ hp 1) hp)
+			       "ROT"                 ; (hp cdr (+ hp 1))
+			       "DUP"                 ; (hp cdr (+ hp 1) (+ hp 1))
+			       "ROT"                 ; (hp (+ hp 1) cdr (+ hp 1))
+			       "STOR"                ; (hp (+ hp 1))  cdr stored
+			       "PUSH" "1"            ; (hp (+ hp 1) 1)
+			       "ADD"                 ; (hp (+ hp 2))
+			       "PUSH" heap-ptr       ; (hp (+ hp 2) &hp)
+			       "STOR"                ; (hp) new hp stored
+			       "PUSH" ptr-flag       ; (hp ptr-flag)
+			       "BOR"                 ; (hp*)
+			       )
+			 )))
+
+
+; top is the cons box to set, then the new value
+(define assembly-set-car 
+  (lambda ()
+    (append-instructions 
+     (list "PUSH" type-mask "BAND" "STOR"))))
+(define assembly-set-cdr 
+  (lambda () 
+    (append-instructions
+     (list "PUSH" type-mask "BAND" "PUSH" "1" "ADD" "STOR"))))
+
+; these define how to call the three primitives car, cdr, and cons as
+; part of larger compiler generated sequences (e.g., function application)
+; for car, we just inline the assembly.  For cdr and cons we do a machine level
+; call into a function.
+(define u-call-car  (lambda () (assembly-car))) ; car is 4 instructions, calling it is three
+					        ; the performance benefit of inlining calls outweighs the 
+					        ; space savings.
+
+(define u-call-cdr  ; cdr is 7 instructions,  it's probably worth not inlining it
+  (lambda () (append-instructions (list "PUSH" "@__u_cdr" "CALL"))))
+
+(define u-call-cons ; cons is really big (24 instructions)! we'll never inline it
+  (lambda () (append-instructions (list "PUSH" "@__u_cons" "CALL"))))
+
+(define u-call-set-car (lambda () (assembly-set-car)))
+(define u-call-set-cdr (lambda () (assembly-set-cdr)))
 
 ; function application convention
 ; top of stack is the closure to apply, then the arguments
@@ -93,102 +160,75 @@
 ; environment pointer to the stack, set the environment 
 ; pointer to the new list, invoke the closure's code,
 ; then restore the environment pointer on return.
+;
+; (args clos) -> ((clos args)) 
 (define assembly-funcall (lambda ()
-			   (append-instruction "DUP")    ; (args clos clos)
-			    (assembly-car)               ; (args clos env)
-			    (append-instruction "ROT")   ; (clos env args)
-			   (assembly-cons)               ; (clos (args . env))
-			   (append-instructions
-			    (list "PUSH" type-mask "BAND"; the env pointer must be a pure adress
-				  "PUSH" env-ptr "LOAD"  ; stack is (clos (args . env) renv)
-				  "SWAP"                 ; stack is (clos renv (args . env) )
-				  "PUSH" env-ptr "SWAP"  ; stack is (clos renv ep (args . env) )
-				  "STOR"                 ; stack is (clos renv) new env is installed!
-				  "SWAP"))               ; stack is (renv clos) 
-			   (assembly-cdr)                ; stack is (renv clos-code)
-			   (append-instructions
-			    (list "CALL"                 ; make the call.  afterwords stack will be (renv rval)
-				  "SWAP"                 ; stack is (rval renv)
-				  "PUSH" env-ptr "SWAP"  ; stack is (rval ep renv)
-				  "STOR"                 ; sets the env pointer
-				  ))))
+			   (append-instruction "DUP")      ; (args clos clos)
+			    (u-call-car)                   ; (args clos env)
+			    (append-instructions 
+			     (list "SWAP"                  ; (args env clos)
+				   "ROT"                   ; (clos args env)
+				   "SWAP"))                ; (clos env  args)
+			    (u-call-cons)	           ; (clos (args . env)*)
+			    (append-instructions
+			     (list "PUSH" env-ptr "LOAD"   ; stack is (clos (args . env)* renv)
+				   "SWAP"                  ; stack is (clos renv (args . env)* )
+				   "PUSH" env-ptr          ; stack is (clos renv (args . env) &ep)
+				   "STOR"                  ; stack is (clos renv) new env is installed!
+				   "SWAP"))                ; stack is (renv clos) 
+			    (u-call-cdr)                   ; stack is (renv clos-code)
+			    (append-instructions
+			     (list "CALL"                  ; make the call.  afterwords stack will be (renv rval)
+				   "SWAP"                  ; stack is (rval renv)
+				   "PUSH" env-ptr          ; stack is (rval renv &ep)
+				   "STOR"                  ; set the env pointer
+				   ))))
 
 ; tail calls are sneakier we avoid saving the current
-; env pointer,  we still use a "CALL" because "JMP"
-; is relative.  we should fix this later.
+; env pointer. 
+; (args clos) -> ((clos args))
 (define assembly-tailcall (lambda ()
-			    (append-instruction "DUP")  ; (args clos clos)
-			    (assembly-car)              ; (args clos env)
-			    (append-instruction "ROT")  ; (clos env args)
-			    (assembly-cons)             ; (clos (args . env) )
+			    (append-instruction "DUP")  ; (renv rp args clos clos)
+			    (u-call-car)                ; (renv rp args clos env)			    
 			    (append-instructions
-			     (list "PUSH" env-ptr       ; (clos (args . env) ep)      
-				   "SWAP"               ; (clos ep (args . env))
-				   "STOR"               ; (clos)
-				   )) ; note that we didn't store the current env
-			    (assembly-cdr)              ; (code)
-			    (append-instruction "CALL")
-			    (assembly-funret)
+			     (list "SWAP"               ; (renv rp args env clos)
+				   "ROT"                ; (renv rp clos args env)
+				   "SWAP"))             ; (renv rp clos env args)
+			    (u-call-cons)               ; (renv rp clos (args . env)* )
+			    (append-instructions
+			     (list "PUSH" env-ptr       ; (renv rp clos (args . env)* ep)      
+				   "STOR"               ; (renv rp clos)
+				   ))                   ; note that we didn't store the current env
+					                ; this is a tail call so we'll return straight
+			                                ; to the current renv/rp!
+			    (u-call-cdr)                ; (renv rp code)
+			    (append-instruction "JMP")  ; we jump into the call with 
+                                                        ;   (renv rp) 
+			                                ; on return we'll have pc = rp, and
+			                                ;   (renv rval) on the stack
+				                   	; just as on return from non-tail call above.
 			    ))
 
 ; returning is simple since cleanup is handled by the caller
 (define assembly-funret (lambda () (append-instruction "RET")))
 			   
-; assembly for the primitive list functions car, cdr, and cons		    
-(define assembly-car  (lambda () (append-instructions 
-				  (list "PUSH" type-mask
-					"BAND" "LOAD"))))
-
-(define assembly-cdr  (lambda () (append-instructions 
-				  (list "PUSH" type-mask
-					"BAND"
-					"PUSH" "1" 
-					"ADD" 
-					"LOAD"))))
-
-; car on top then cdr
-(define assembly-cons (lambda ()
-			(append-instructions 
-			 (list "PUSH" heap-ptr       ; (cdr car &hp)
-			       "LOAD"                ; (cdr car hp)
-			       "DUP"                 ; (cdr car hp hp)
-			       "ROT"                 ; (cdr hp hp car)
-			       "STOR"                ; (cdr hp) car stored
-			       "DUP"                 ; (cdr hp hp)
-			       "PUSH" "1"            ; (cdr hp hp 1)
-			       "ADD"                 ; (cdr hp (+ hp 1))
-			       "ROT"                 ; (hp (+ hp 1) cdr)
-			       "SWAP"                ; (hp cdr (+ hp 1))
-			       "DUP"                 ; (hp cdr (+ hp 1) (+ hp 1))
-			       "ROT"                 ; (hp (+ hp 1) (+ hp 1) cdr)
-			       "STOR"                ; (hp (+ hp 1))  cdr stored
-			       "PUSH" "1"            ; (hp (+ hp 1) 1)
-			       "ADD"                 ; (hp (+ hp 2))
-			       "PUSH" heap-ptr       ; (hp (+ hp 2) &hp)
-			       "SWAP"                ; (hp &hp (+ hp 2))
-			       "STOR"                ; (hp) new hp stored
-			       "PUSH" ptr-flag       ; (hp ptr-flag)
-			       "BOR"                 ; (hp*)
-			       )
-			 )))
-			   
 ; assembly for loading a cell from the environment.
 (define assembly-env-cell-idx
   (lambda (idx)
     (if (= idx 0)
-	(assembly-car)
+	(u-call-car)
 	(begin
-	  (assembly-cdr)
+	  (u-call-cdr)
 	  (assembly-env-cell-idx (- idx 1))))))
 
 (define assembly-env-cell
   (lambda (depth idx)
     (if (= depth 0)
 	(begin
-	  (assembly-car)
+	  (u-call-car)
 	  (assembly-env-cell-idx idx))
 	(begin
-	  (assembly-cdr)
+	  (u-call-cdr)
 	  (assembly-env-cell (- depth 1) idx)))))
 
 ; Lookup functions,  find a particular atom in the environment
@@ -203,7 +243,7 @@
 
 (define lookup-reference-depth
   (lambda (r e cont)
-    (if (null? e) #f
+    (if (null? e) (cont #f)
 	(lookup-reference-offset r (car e) 
 				 (lambda (z) 
 				   (cont 
@@ -223,41 +263,13 @@
 
 ; when we can detect application of a builtin
 ; we can avoid function call overhead and just inline the assembly
-(define compile-car 
-  (lambda (l env cont) 
-    (compile-sexp (car (cdr l)) env
-		  (lambda ()
-		    (assembly-car) 
-		    (cont)
-		    ))))
-
-(define compile-cdr 
-  (lambda (l env cont)
-    (compile-sexp (car (cdr l)) env
-		  (lambda ()
-		    (assembly-cdr)
-		    (cont)
-		    ))))
-
-(define compile-cons 
-  (lambda (l env cont) 
-    (compile-sexp (car (cdr (cdr l))) env
-		  (lambda ()
-		    (compile-sexp 
-		     (car (cdr l)) env
-		     (lambda ()
-		       (assembly-cons)
-		       (cont)))))))
-
 (define compile-if
   (lambda (l env cont)
     (cont)))
 
 (define compile-nil      
   (lambda (l env cont) 
-    (append-instructions (list "PUSH" "0"
-			       "PUSH" ptr-flag
-			       "BOR"))
+    (append-instructions (list "PUSH" "@__nil" "LOAD"))
     (cont)))
 
 (define compile-constant 
@@ -276,7 +288,7 @@
 				    (assembly-env-cell (car i) (cdr i)))
 					;  hmm, this better be a global reference.
 				  (append-instructions 
-				   (list "PUSH" (string-append "@" r) "LOAD"))
+				   (list "PUSH" (string-append "@" r)))
 				  )
 			      (cont)
 			      ))))
@@ -296,7 +308,7 @@
        (append-instructions
 	(list "PUSH" (string-append "@" label)
 	      "PUSH" env-ptr "LOAD"))
-       (assembly-cons)
+       (u-call-cons)
        (cont)
        (append-instruction (string-append ":" label))
        (compile-sexp (car (cdr (cdr l))) (cons (car (cdr l)) env) (lambda () (assembly-funret)) )
@@ -306,12 +318,13 @@
 ; this is right, except that it makes 
 ; define not work quite the way it is supposed to.
 (define compile-define
-  (lambda (l env cont)
-    (begin
-      (append-instructions 
-       (list "PUSH" (string-append "@" (car (cdr l)))))	  
+  (lambda (l env cont)	  
       (compile-sexp (car (cdr (cdr l)))
-		    (lambda () (append-instruction "STOR"))))))
+		    (lambda () 
+		      (append-instructions 
+		       (list "PUSH" 
+			     (string-append "@" (car (cdr l)))
+			     "STOR"))))))
 
 (define compile-arguments
   (lambda (l env cont)
@@ -320,7 +333,7 @@
 			   (lambda ()
 			     (compile-sexp (car l) env
 					   (lambda ()
-					     (assembly-cons)
+					     (u-call-cons)
 					     (cont))))))))
 (define compile-list
   (lambda (l env cont)
@@ -346,24 +359,61 @@
 	(compile-list s env cont) 
 	(compile-atom s env cont))))
 
+
+; The builtin functions are a little peculiar.
+; The convention is 
+;     :foo is the closure cell for the foo function,
+;     :__foo is the entry point when called as a closure
+;            (i.e., arguments are retrieved from the env pointer)
+;     :__u_foo is the entry point for internal invocations
+;            (e.g., during closure invocation). arguments are read
+;            from below the rp on the stack
+;     :__foo_body is the actual implementation of foo,  arguments
+;            are read from the top of stack
 (define define-builtin-functions
   (lambda ()
-    (append-instructions 
-     (list ":cons" ptr-flag "@__cons" ":__cons"))
-    (assembly-env-cell 0 0)
-    (assembly-env-cell 0 1)
-    (assembly-cons)
-    (assembly-funret)
+    (append-instructions     
+     (list ":cons" "@__nil" "@__cons"   ; this is the closure cell
+	   ":__u_cons"                  ; this is the internal entry point
+	                                ; stack is (cdr car rp)
+	   "ROT"                        ; stack is (rp  cdr car)
+	   "PUSH" "@__cons_body"        ; stack is (rp cdr car __cons_body)
+	   "JMP"                        ; jump to cons_body
+	   ":__cons"                    ; this is the main entry point
+	   "PUSH" env-ptr               ; stack is (renv rp &ep)
+	   "LOAD" "DUP"))               ; stack is (renv rp ep ep)
+    (assembly-env-cell 0 1)             ; stack is (renv rp ep cdr)
+    (append-instruction "SWAP")         ; stack is (renv rp cdr ep)
+    (assembly-env-cell 0 0)             ; stack is (renv rp cdr car)
+    (append-instruction ":__cons_body") ; now we're at the body of cons
+    (assembly-cons)                     ; dump the assembly for cons
+    (assembly-funret)                   ; append a return statement
 
     (append-instructions
-     (list ":car" ptr-flag "@__car" ":__car"))
-    (assembly-env-cell 0 0)
-    (assembly-car)
-    (assembly-funret)
+     (list ":car" "@__nil" "@__car"     ; closure cell
+	   ":__u_car"                   ; internal entry point
+	                                ; (arg rp)
+	   "SWAP"                       ; (rp arg)
+	   "PUSH" "@__car_body"         ; (rp arg __car_body)
+	   "JMP"                        ; jump to the body
+	   ":__car"                     ; closure entry point (arg is in env)
+	   "PUSH" env-ptr "LOAD"))      ; stack is (renv rp ep)
+    (assembly-env-cell 0 0)             ; stack is (renv rp arg)
+    (append-instruction ":__car_body")  ; now we're at the body
+    (assembly-car)                      ; dump the assembly for car
+    (assembly-funret)                   ; and a return statement
 
-    (append-instructions
-     (list ":car" ptr-flag "@__car" ":__cdr"))
+    (append-instructions                ; this is completely analogous to above
+     (list ":cdr" "@__nil" "@__cdr" 
+	   ":__u_cdr"
+	   
+	   "SWAP"
+	   "PUSH" "@__cdr_body"
+	   "JMP"
+	   ":__cdr"
+	   "PUSH" env-ptr "LOAD"))
     (assembly-env-cell 0 0)
+    (append-instruction ":__cdr_body")
     (assembly-cdr)
     (assembly-funret)
     )
@@ -372,20 +422,25 @@
 (define compile-prog
   (lambda (s)
     (append-instructions 
-     (list "PUSH" heap-ptr ; set the initial heap pointer
-	   "PUSH" "2048"
-	   "STOR"
-	   "PUSH" env-ptr))
-     (compile-nil '() '()
-		  (lambda ()
-		    (store-to-heap)
-		    (append-instructions
-		     (list "PUSH" type-mask "BAND" "STOR")) ; set the initial env pointer
-		    (compile-sexp s '() (lambda () 
-					  (append-instructions (list "PINT" "END"))
-					  (define-builtin-functions)
-					  ))))))
-					
+     (list 
+      ; initial trampoline past the definition of nil
+      "PUSH" "5" "JMP"
+      ; here's the definition of nil (we're at address
+      ; 3 at the moment so 0x10000003 is @__nil & ptr-flag).
+      ":__nil" "0x10000003" "0x10000003"
+      ; now initialize the heap pointer to point somewhere
+      "PUSH" "2048"
+      "PUSH" heap-ptr ; set the initial heap pointer
+      "STOR"))
+    (compile-nil '() '()
+		 (lambda ()
+		   (append-instructions
+		    (list "PUSH" env-ptr "STOR")) ; set the initial env pointer
+		   (compile-sexp s '() (lambda () 
+					 (append-instructions (list "PINT" "END"))
+					 (define-builtin-functions)
+					 ))))))
+
 (define read-atom-helper (lambda (ch cont)
   (if (or (isspace ch) (char=? ch #\) ))
       (cont  (cons #f ch) ) 

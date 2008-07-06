@@ -10,7 +10,7 @@
 
 #define I_CALL  5
 #define I_RET   6
-/* jmp and jz are relative jumps */
+/* jmp and jz are absolute jumps */
 #define I_JMP   7
 #define I_JZ    8
 #define I_END   9
@@ -24,7 +24,7 @@
 #define I_BAND  15
 
 /* Reading and writing memory */
-#define I_STOR  16
+#define I_STOR  16  /* target address is top, then value */
 #define I_LOAD  17
 
 /* I/O operations */
