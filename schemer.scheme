@@ -146,12 +146,31 @@
 					"ADD" 
 					"LOAD"))))
 
+; car on top then cdr
 (define assembly-cons (lambda ()
-			(store-to-heap)              ; store the car to the heap
-			(append-instruction "SWAP")  ; swap the cdr to the top
-			(store-to-heap)              ; store the cdr to the next cell
-			(append-instruction "POP")   ; we don't care about the cdr's address
-			))
+			(append-instructions 
+			 (list "PUSH" heap-ptr       ; (cdr car &hp)
+			       "LOAD"                ; (cdr car hp)
+			       "DUP"                 ; (cdr car hp hp)
+			       "ROT"                 ; (cdr hp hp car)
+			       "STOR"                ; (cdr hp) car stored
+			       "DUP"                 ; (cdr hp hp)
+			       "PUSH" "1"            ; (cdr hp hp 1)
+			       "ADD"                 ; (cdr hp (+ hp 1))
+			       "ROT"                 ; (hp (+ hp 1) cdr)
+			       "SWAP"                ; (hp cdr (+ hp 1))
+			       "DUP"                 ; (hp cdr (+ hp 1) (+ hp 1))
+			       "ROT"                 ; (hp (+ hp 1) (+ hp 1) cdr)
+			       "STOR"                ; (hp (+ hp 1))  cdr stored
+			       "PUSH" "1"            ; (hp (+ hp 1) 1)
+			       "ADD"                 ; (hp (+ hp 2))
+			       "PUSH" heap-ptr       ; (hp (+ hp 2) &hp)
+			       "SWAP"                ; (hp &hp (+ hp 2))
+			       "STOR"                ; (hp) new hp stored
+			       "PUSH" ptr-flag       ; (hp ptr-flag)
+			       "BOR"                 ; (hp*)
+			       )
+			 )))
 			   
 ; assembly for loading a cell from the environment.
 (define assembly-env-cell-idx
@@ -329,18 +348,21 @@
 
 (define define-builtin-functions
   (lambda ()
-    (append-instruction ":__cons")
+    (append-instructions 
+     (list ":cons" ptr-flag "@__cons" ":__cons"))
     (assembly-env-cell 0 0)
     (assembly-env-cell 0 1)
     (assembly-cons)
     (assembly-funret)
 
-    (append-instruction ":__car")
+    (append-instructions
+     (list ":car" ptr-flag "@__car" ":__car"))
     (assembly-env-cell 0 0)
     (assembly-car)
     (assembly-funret)
 
-    (append-instruction ":__cdr")
+    (append-instructions
+     (list ":car" ptr-flag "@__car" ":__cdr"))
     (assembly-env-cell 0 0)
     (assembly-cdr)
     (assembly-funret)
@@ -379,8 +401,8 @@
 
 (define read-atom (lambda (ch cont) 
 		    (read-atom-helper ch (lambda (x) 
-					   (cont (cons (list->string (car x)) 
-						       (cdr x)))))))
+					   (cont (if (car x) 
+						     (cons (list->string (car x)) (cdr x)) x))))))
 
 (define read-list 
   (lambda (atc cont)
