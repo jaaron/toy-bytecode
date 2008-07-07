@@ -40,7 +40,7 @@
 ; the heap and the environment
 (define heap-ptr 1024)
 (define env-ptr 1025)
-(define top-level-env '("cons" "car" "cdr" "+" "-" "*"))
+(define top-level-env '(("cons" "car" "cdr" "+" "-" "*")))
 
 ; this is the compiler internal notion of what instruction
 ; is currently being written
@@ -332,16 +332,26 @@
 ; define not work quite the way it is supposed to.
 (define compile-define
   (lambda (l env)
-    (let ((v (lookup-reference l env))
+    (let ((v (lookup-reference (car (cdr l)) env))
 	  (r (compile-sexp (car (cdr (cdr l))) env)))
       (if v 
 	  (begin
 	    (assembly-env-cell (car v) (cdr v))
 	    (u-call-set-car))
 	  (begin
-	    (assembly-append-to-env)
-	    (set-car! env (append (car env) (list l))))
-	  r))))
+	    (set-car! top-level-env (append (car top-level-env) (list (car (cdr l)))))
+	    (assembly-nil)
+	    (append-instruction "SWAP")
+	    (u-call-cons)
+	    (append-instruction "DUP")
+	    (append-instructions 
+	     (list
+	      "PUSH" "@__top_level_env_tail" 
+	      "LOAD" "PUSH" type-mask "BAND" "STOR"
+	      "PUSH" "1" 
+	      "ADD" "PUSH" "@__top_level_env_tail" "STOR"
+	      ))))
+	  r)))
 
 ; when we can detect application of a builtin
 ; we can avoid function call overhead and just inline the assembly
@@ -475,7 +485,7 @@
     (assembly-funret)
 
     (append-instructions
-     (list ":multiply" "@__nil" "@__multiply :__multiply"))
+     (list ":multiply" "@__nil" "@__multiply" ":__multiply"))
     (assembly-env-val 0 0)
     (assembly-env-val 0 1)
     (append-instruction "MUL")
@@ -501,6 +511,8 @@
       "@cons"      "0x8000000d"
       ":__initial_env"
       "0x8000000f" "@__nil" 
+      ":__top_level_env_tail"
+      "0x80000006"
       ))
      (define-builtin-functions)
      (append-instructions 
@@ -519,9 +531,10 @@
   (lambda (ch)
     (let ((sp (read-sexp ch (lambda (x) x))))
       (if (car sp)
-	  (let ((r (compile-sexp (car sp) (list top-level-env))))
+	  (let ((r (compile-sexp (car sp) top-level-env)))
 	    (do-compile-task 
-	     (lambda () (compiler-run (cdr sp)) r)))
+	     (lambda () 
+	       (compiler-run (if (isspace (cdr sp)) (next-non-ws) (cdr sp))) r)))
 	  (append-instructions (list "PINT" "END"))))))
 
 (define read-atom-helper (lambda (ch cont)
