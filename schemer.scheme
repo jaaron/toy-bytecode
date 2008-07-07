@@ -92,6 +92,7 @@
 (define assembly-car  (lambda () (append-instructions 
 				  (list "PUSH" type-mask
 					"BAND" "LOAD"))))
+
 ; (ptr*) -> ((cdr ptr))
 (define assembly-cdr  (lambda () (append-instructions 
 				  (list "PUSH" type-mask
@@ -141,8 +142,8 @@
 ; for car, we just inline the assembly.  For cdr and cons we do a machine level
 ; call into a function.
 (define u-call-car  (lambda () (assembly-car))) ; car is 4 instructions, calling it is three
-					        ; the performance benefit of inlining calls outweighs the 
-					        ; space savings.
+					        ; the performance benefit of inlining calls outweighs
+					        ; the space savings.
 
 (define u-call-cdr  ; cdr is 7 instructions,  it's probably worth not inlining it
   (lambda () (append-instructions (list "PUSH" "@__u_cdr" "CALL"))))
@@ -178,7 +179,7 @@
 				   "SWAP"))                ; stack is (renv clos) 
 			    (u-call-cdr)                   ; stack is (renv clos-code)
 			    (append-instructions
-			     (list "CALL"                  ; make the call.  afterwords stack will be (renv rval)
+			     (list "CALL"                  ; make the call.  we'll have (renv rval)
 				   "SWAP"                  ; stack is (rval renv)
 				   "PUSH" env-ptr          ; stack is (rval renv &ep)
 				   "STOR"                  ; set the env pointer
@@ -301,7 +302,13 @@
 	    (compile-nil x env cont)
 	    (compile-reference x env cont)))))
 
-; this is right, but breaks continuation passing.
+; this is right, but breaks the normal continuation passing form 
+; of compile-* functions.
+;
+; Hm, we should probably be flagging code pointers with something
+; so that we can avoid gc'ing them. Right now we just assume the 
+; code is statically defined below initial heap pointer but in order
+; to support eval we'll have to do something more clever.
 (define compile-lambda 
   (lambda (l env cont)
     ((lambda (label)
@@ -370,6 +377,7 @@
 ;            from below the rp on the stack
 ;     :__foo_body is the actual implementation of foo,  arguments
 ;            are read from the top of stack
+;
 (define define-builtin-functions
   (lambda ()
     (append-instructions     
@@ -390,7 +398,7 @@
     (assembly-funret)                   ; append a return statement
 
     (append-instructions
-     (list ":car" "@__nil" "@__car"     ; closure cell
+     (list ":car" "@__nil" "@__car"     ; closure cell	   
 	   ":__u_car"                   ; internal entry point
 	                                ; (arg rp)
 	   "SWAP"                       ; (rp arg)
@@ -487,3 +495,5 @@
 (define compiler-entry (lambda ()
 			 (read-sexp (next-non-ws) (lambda (s)
 						    (compile-prog (car s))))))
+
+(compiler-entry)
