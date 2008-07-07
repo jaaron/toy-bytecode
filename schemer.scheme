@@ -19,9 +19,9 @@
     (list
      (cons "lambda" compile-lambda)
      (cons "if"     compile-if)
+     (cons "define" compile-define)   
      )
-    )
-)
+    ))
 
 (define find-builtin 
   (lambda (f ss)
@@ -39,8 +39,8 @@
 ; these are runtime constants used for tracking
 ; the heap and the environment
 (define heap-ptr 1024)
-(define top-level-scope-ptr 1025)
-(define env-ptr 1026)
+(define env-ptr 1025)
+(define top-level-env '("cons" "car" "cdr" "+" "-" "*"))
 
 ; this is the compiler internal notion of what instruction
 ; is currently being written
@@ -217,7 +217,7 @@
 (define assembly-env-cell-idx
   (lambda (idx)
     (if (= idx 0)
-	(u-call-car)
+	#t
 	(begin
 	  (u-call-cdr)
 	  (assembly-env-cell-idx (- idx 1))))))
@@ -231,6 +231,15 @@
 	(begin
 	  (u-call-cdr)
 	  (assembly-env-cell (- depth 1) idx)))))
+
+(define assembly-env-val 
+  (lambda (depth idx)
+    (assembly-env-cell depth idx)
+    (u-call-car)))
+
+(define assembly-nil      
+  (lambda ()
+    (append-instructions (list "PUSH" "@__nil" "LOAD"))))
 
 ; Lookup functions,  find a particular atom in the environment
 (define lookup-reference-offset 
@@ -256,51 +265,46 @@
 								      (cons (+ (car w) 1) (cdr w))
 								      #f))))))))))
 
+(define lookup-reference 
+  (lambda (r e)
+    (lookup-reference-depth r e (lambda (x) x))))
+
+(define do-compile-task 
+  (lambda (t) (if t (do-compile-task (t)) #f)))
+
 ; Compilation functions
 ; These should all be written in explicit continuation passing form
 ; to avoid excessive stack use when run on the bytecode interpreter
 ; arguments are always: the form to be compiled, the environment in which
 ; it would be executed, and the continuation to invoke on completion
 
-; when we can detect application of a builtin
-; we can avoid function call overhead and just inline the assembly
-(define compile-if
-  (lambda (l env cont)
-    (cont)))
-
-(define compile-nil      
-  (lambda (l env cont) 
-    (append-instructions (list "PUSH" "@__nil" "LOAD"))
-    (cont)))
 
 (define compile-constant 
-  (lambda (c env cont) 
-    (append-instructions (list "PUSH" c))
-    (cont)))
+  (lambda (c env) (append-instructions (list "PUSH" c)) #f))
 
 (define compile-reference 
-  (lambda (r env cont)
-    (lookup-reference-depth r env 
-			    (lambda (i) 			      
-			      (if i 
-				  (begin
-				    (append-instructions 
-				     (list "PUSH" env-ptr "LOAD"))
-				    (assembly-env-cell (car i) (cdr i)))
-					;  hmm, this better be a global reference.
-				  (append-instructions 
-				   (list "PUSH" (string-append "@" r)))
-				  )
-			      (cont)
-			      ))))
+  (lambda (r env)
+    (let ((i (lookup-reference r env)))
+      (if i 
+	  (begin
+	    (append-instructions 
+	     (list "PUSH" env-ptr "LOAD"))
+	    (assembly-env-val (car i) (cdr i)))
+	  ; this is an error
+	  (begin
+	    (display (string-append "Undefined symbol: " r))
+	    (exit))
+	  )
+      #f
+      )))
 
 (define compile-atom 
-  (lambda (x env cont) 
-    (if (is-number? x) 
-	(compile-constant x env cont) 
+  (lambda (x env) 
+    (if (is-number? x)
+	(compile-constant x env) 
 	(if (string=? "nil" x) 
-	    (compile-nil x env cont)
-	    (compile-reference x env cont)))))
+	    (assembly-nil)
+	    (compile-reference x env)))))
 
 ; this is right, but breaks the normal continuation passing form 
 ; of compile-* functions.
@@ -310,61 +314,91 @@
 ; code is statically defined below initial heap pointer but in order
 ; to support eval we'll have to do something more clever.
 (define compile-lambda 
-  (lambda (l env cont)
-    ((lambda (label)
-       (append-instructions
-	(list "PUSH" (string-append "@" label)
-	      "PUSH" env-ptr "LOAD"))
-       (u-call-cons)
-       (cont)
-       (append-instruction (string-append ":" label))
-       (compile-sexp (car (cdr (cdr l))) (cons (car (cdr l)) env) (lambda () (assembly-funret)) )
-       ) 
-     (fresh-label))))
+  (lambda (l env)
+    (let ((label (fresh-label)))
+      (append-instructions
+       (list "PUSH" (string-append "@" label)
+	     "PUSH" env-ptr "LOAD"))
+      (u-call-cons)
+      (lambda ()	
+	(append-instruction (string-append ":" label))
+	(let ((r (compile-sexp (car (cdr (cdr l))) (cons (car (cdr l)) env)) ))
+	  (assembly-funret) 
+	  r)	
+	)
+      )))
 
 ; this is right, except that it makes 
 ; define not work quite the way it is supposed to.
 (define compile-define
-  (lambda (l env cont)	  
-      (compile-sexp (car (cdr (cdr l)))
-		    (lambda () 
-		      (append-instructions 
-		       (list "PUSH" 
-			     (string-append "@" (car (cdr l)))
-			     "STOR"))))))
+  (lambda (l env)
+    (let ((v (lookup-reference l env))
+	  (r (compile-sexp (car (cdr (cdr l))) env)))
+      (if v 
+	  (begin
+	    (assembly-env-cell (car v) (cdr v))
+	    (u-call-set-car))
+	  (begin
+	    (assembly-append-to-env)
+	    (set-car! env (append (car env) (list l))))
+	  r))))
+
+; when we can detect application of a builtin
+; we can avoid function call overhead and just inline the assembly
+(define compile-if
+  (lambda (l env cont)
+    (let ((false-label (fresh-label))
+	  (join-label (fresh-label)))
+      (let ((r1 (compile-sexp (car l) env))
+	    (x  (append-instructions 
+		 (list "PUSH" negative-false-value
+		       "ADD"
+		       "PUSH" (string-append "@" false-label)
+		       "JZ")))
+	    (r2 (compile-sexp (car (cdr l)) env))
+	    (y  (append-instructions 
+		 (list "PUSH" (string-append "@" join-label)
+		       "JMP"
+		       (string-append ":" false-label))))
+	    (r3 (compile-sexp (car (cdr (cdr l))) env)))
+	(append-instruction (string-append ":" join-label))
+	(lambda ()
+	  (do-compile-task r1)
+	  (do-compile-task r2)
+	  (do-compile-task r3)
+	  )
+	)
+      )))
 
 (define compile-arguments
-  (lambda (l env cont)
-    (if (null? l) (compile-nil l env cont)     
-	(compile-arguments (cdr l) env
-			   (lambda ()
-			     (compile-sexp (car l) env
-					   (lambda ()
-					     (u-call-cons)
-					     (cont))))))))
-(define compile-list
-  (lambda (l env cont)
+  (lambda (l env)
     (if (null? l) 
-	(compile-nil l env cont)
-	((lambda (s)
-	  (if s 
-	      (s l env cont) 
-	      (compile-arguments 
-	       (cdr l) env 
-	       (lambda ()
-		 (compile-sexp 
-		  (car l) env
-		  (lambda ()
-		    (assembly-funcall)
-		    (cont)
-		    )))))) 
-	 (find-builtin (car l) (builtin-forms))))))
+	(begin (assembly-nil) #f)
+	(let ((r1 (compile-arguments (cdr l) env))
+	      (r2 (compile-sexp (car l) env)))
+	  (u-call-cons)
+	  (lambda () 
+	    (do-compile-task r1)
+	    (do-compile-task r2)
+	    )))))
+
+(define compile-list
+  (lambda (l env)
+    (let ((s (find-builtin (car l) (builtin-forms))))
+      (if s 
+	  (s l env)
+	  (let ((r1 (compile-arguments (cdr l) env))
+		(r2 (compile-sexp (car l) env)))
+	    (assembly-funcall)
+	    (lambda ()
+	      (do-compile-task r1)
+	      (do-compile-task r2)))))))
 
 (define compile-sexp 
-  (lambda (s env cont) 
+  (lambda (s env) 
     (if (list? s) 
-	(compile-list s env cont) 
-	(compile-atom s env cont))))
+	(compile-list s env) 
+	(compile-atom s env))))
 
 
 ; The builtin functions are a little peculiar.
@@ -384,18 +418,17 @@
      (list ":cons" "@__nil" "@__cons"   ; this is the closure cell
 	   ":__u_cons"                  ; this is the internal entry point
 	                                ; stack is (cdr car rp)
-	   "ROT"                        ; stack is (rp  cdr car)
-	   "PUSH" "@__cons_body"        ; stack is (rp cdr car __cons_body)
-	   "JMP"                        ; jump to cons_body
-	   ":__cons"                    ; this is the main entry point
-	   "PUSH" env-ptr               ; stack is (renv rp &ep)
-	   "LOAD" "DUP"))               ; stack is (renv rp ep ep)
-    (assembly-env-cell 0 1)             ; stack is (renv rp ep cdr)
-    (append-instruction "SWAP")         ; stack is (renv rp cdr ep)
-    (assembly-env-cell 0 0)             ; stack is (renv rp cdr car)
-    (append-instruction ":__cons_body") ; now we're at the body of cons
-    (assembly-cons)                     ; dump the assembly for cons
-    (assembly-funret)                   ; append a return statement
+	   "ROT"))                      ; stack is (rp  cdr car)
+    (assembly-cons)                     ; this is the internal cons used when building arg lists
+    (assembly-funret)                   
+    (append-instructions                ; this is the exposed cons, it just returns 
+     (list ":__cons"                    ; it's return is identical to the car of its
+	   "PUSH" env-ptr               ; env (i.e., the list of its args)
+	   "PUSH" type-mask
+	   "BAND" "LOAD"))
+    (u-call-car)                   
+    (assembly-funret)
+					
 
     (append-instructions
      (list ":car" "@__nil" "@__car"     ; closure cell	   
@@ -406,7 +439,7 @@
 	   "JMP"                        ; jump to the body
 	   ":__car"                     ; closure entry point (arg is in env)
 	   "PUSH" env-ptr "LOAD"))      ; stack is (renv rp ep)
-    (assembly-env-cell 0 0)             ; stack is (renv rp arg)
+    (assembly-env-val 0 0)              ; stack is (renv rp arg)
     (append-instruction ":__car_body")  ; now we're at the body
     (assembly-car)                      ; dump the assembly for car
     (assembly-funret)                   ; and a return statement
@@ -420,34 +453,76 @@
 	   "JMP"
 	   ":__cdr"
 	   "PUSH" env-ptr "LOAD"))
-    (assembly-env-cell 0 0)
+    (assembly-env-val 0 0)
     (append-instruction ":__cdr_body")
     (assembly-cdr)
+    (assembly-funret)
+
+    ; arithmetic ops
+    ; these aren't used internally so we just define them.
+    (append-instructions
+     (list ":add" "@__nil" "@__add :__add"))
+    (assembly-env-val 0 0)
+    (assembly-env-val 0 1)
+    (append-instruction "ADD")
+    (assembly-funret)
+
+    (append-instructions
+     (list ":subtract" "@__nil" "@__subtract :__subtract"))
+    (assembly-env-val 0 0)
+    (assembly-env-val 0 1)    
+    (append-instructions (list "PUSH" "-1" "MUL" "ADD"))
+    (assembly-funret)
+
+    (append-instructions
+     (list ":multiply" "@__nil" "@__multiply :__multiply"))
+    (assembly-env-val 0 0)
+    (assembly-env-val 0 1)
+    (append-instruction "MUL")
     (assembly-funret)
     )
 )
 
-(define compile-prog
-  (lambda (s)
+(define assembly-preamble
+  (lambda ()
     (append-instructions 
      (list 
       ; initial trampoline past the definition of nil
-      "PUSH" "5" "JMP"
+      "PUSH" "@__main" "JMP"
       ; here's the definition of nil (we're at address
       ; 3 at the moment so 0x10000003 is @__nil & ptr-flag).
-      ":__nil" "0x10000003" "0x10000003"
-      ; now initialize the heap pointer to point somewhere
-      "PUSH" "2048"
-      "PUSH" heap-ptr ; set the initial heap pointer
-      "STOR"))
-    (compile-nil '() '()
-		 (lambda ()
-		   (append-instructions
-		    (list "PUSH" env-ptr "STOR")) ; set the initial env pointer
-		   (compile-sexp s '() (lambda () 
-					 (append-instructions (list "PINT" "END"))
-					 (define-builtin-functions)
-					 ))))))
+      ":__nil"
+      "0x80000003" "0x80000003"
+      "@multiply"  "0x80000003"
+      "@subtract"  "0x80000005"
+      "@add"       "0x80000007"
+      "@cdr"       "0x80000009"
+      "@car"       "0x8000000b"
+      "@cons"      "0x8000000d"
+      ":__initial_env"
+      "0x8000000f" "@__nil" 
+      ))
+     (define-builtin-functions)
+     (append-instructions 
+      (list 
+       ":__main" ; now initialize the heap pointer to point somewhere
+       "PUSH" "2048"
+       "PUSH" heap-ptr ; set the initial heap pointer
+       "STOR"))
+     (append-instructions
+      (list "PUSH" "@__initial_env" "PUSH" ptr-flag "BOR" 
+	    "PUSH" env-ptr "STOR")) ; set the initial env pointer
+     ))
+
+
+(define compiler-run 
+  (lambda (ch)
+    (let ((sp (read-sexp ch (lambda (x) x))))
+      (if (car sp)
+	  (let ((r (compile-sexp (car sp) (list top-level-env))))
+	    (do-compile-task 
+	     (lambda () (compiler-run (cdr sp)) r)))
+	  (append-instructions (list "PINT" "END"))))))
 
 (define read-atom-helper (lambda (ch cont)
   (if (or (isspace ch) (char=? ch #\) ))
@@ -485,15 +560,14 @@
   )
   
 (define read-sexp (lambda (ch cont)
-		    (if (char=? ch #\( )
-			(read-sexp (next-non-ws) (lambda (x) (read-list x cont)))
-			(read-atom ch cont)
-			)
-		    )
+		    (if (char? ch)
+			(if (char=? ch #\( )
+			    (read-sexp (next-non-ws) (lambda (x) (read-list x cont)))
+			    (read-atom ch cont)
+			    )
+			(cons #f ch)
+		    ))
   )
   
-(define compiler-entry (lambda ()
-			 (read-sexp (next-non-ws) (lambda (s)
-						    (compile-prog (car s))))))
-
-(compiler-entry)
+(assembly-preamble)
+(compiler-run (next-non-ws))

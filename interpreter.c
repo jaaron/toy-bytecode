@@ -47,7 +47,9 @@
   fprintf(stream, "pc: %d, sp: %p height: %d\nstack:\n",		\
 	  pc-memory, sp, STACK_HEIGHT());				\
   while(q < STACK_HEIGHT() ){						\
-    fprintf(stream, "\t%ld\n", STACK(q++));				\
+    fprintf(stream, (STACK(q) > 0x80000000) ?				\
+	    "\t%lx\n" : "\t%ld\n", STACK(q));				\
+    q++;								\
   }									\
   }while(0)
 
