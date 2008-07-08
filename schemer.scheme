@@ -431,12 +431,18 @@
 	   "ROT"))                      ; stack is (rp  cdr car)
     (assembly-cons)                     ; this is the internal cons used when building arg lists
     (assembly-funret)                   
-    (append-instructions                ; this is the exposed cons, it just returns 
-     (list ":__cons"                    ; it's return is identical to the car of its
-	   "PUSH" env-ptr               ; env (i.e., the list of its args)
-	   "PUSH" type-mask
-	   "BAND" "LOAD"))
-    (u-call-car)                   
+    (append-instructions                ; this is the exposed cons, it plays a little trick
+     (list ":__cons"                    ; with the environment list by loading the second arg,
+	   "PUSH" env-ptr "LOAD"))      ; grabbing the cons box containing the first arg,
+    (assembly-env-val 0 1)              ; then overwriting the cdr pointer and returning.
+    (append-instructions                ; this is safe since the cons boxes surrounding the 
+     (list "PUSH" env-ptr "LOAD"))      ; arguments are allocated in assembly-funcall
+    (assembly-env-cell 0 0)             ; so it is guaranteed to not be shared.
+    (append-instructions                ; stack is (cdr &car)
+     (list "DUP"                        ; (cdr &car* &car*)                       
+	   "ROT"                        ; (&car* cdr &car*)
+	   "PUSH" type-mask "BAND"      ; (&car* cdr &car)
+	   "PUSH" 1 "ADD" "STOR"))      
     (assembly-funret)
 					
 

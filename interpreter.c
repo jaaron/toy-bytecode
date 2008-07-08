@@ -48,7 +48,7 @@
 	  pc-memory, sp, STACK_HEIGHT());				\
   while(q < STACK_HEIGHT() ){						\
     fprintf(stream, (STACK(q) > 0x80000000) ?				\
-	    "\t%lx\n" : "\t%ld\n", STACK(q));				\
+	    "\t0x%lx\n" : "\t%ld\n", STACK(q));				\
     q++;								\
   }									\
   }while(0)
@@ -177,7 +177,7 @@ int main(int argc, char *argv[])
   /* I/O */
   INSTRUCTION(GETC, STACK_PUSH(getchar()));
   INSTRUCTION(DUMP, DO_DUMP(stdout));
-  INSTRUCTION(PINT, printf("%ld\n", STACK_POP()));
+  INSTRUCTION(PINT, printf((STACK(0) > 0x80000000 ? "0x%lx\n" : "%ld\n"), STACK(0)); STACK_POP());
   INSTRUCTION(PSTR, printf("%s\n", (char *)(&memory[STACK_POP()])));
   INSTRUCTION(PCHR, putchar(STACK_POP()));
   return 0;
