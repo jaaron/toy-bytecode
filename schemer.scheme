@@ -31,16 +31,36 @@
 	    (cdr (car ss))
 	    (find-builtin f (cdr ss))))))
 
-; the high bit of each word is a type-mask
-; if it is set, then the word is  a pointer.
+
+; I really need to fix the object representation 
+; scheme.  Right now pointers are identified by setting
+; the high bit (and all pointers point to cons boxes)
+; and false = 0 and true = 1.  This isn't really ideal
+; because it breaks scheme's model where false (#f) and true (#t)
+; are not integers, and it makes negative numbers kinda tricky.  
+; 
+; I may end up pushing this down to the VM level and defining 
+; something like:
+; bit 0 set        -> pointer, 
+;                     object size is in bits 2-10 location in bits 11 to 31 
+; bit 1 set        -> language defined constant.  
+; bits 0 & 1 clear -> immediate integer value in bits 2-31
+;
+; The VM would do type checking on operations 
+; (LOAD, STORE, and ARITHMETIC), 
+; PUSH would take an immediate numeric argument (and shift left by two)
+; new instructions TOP, and TOC, and TOI would coerce between the types
 (define type-mask "0x7fffffff")
 (define ptr-flag  "0x80000000")
+(define true-value 1)
+(define false-value 0)
+(define negative-false-value 0)
 
 ; these are runtime constants used for tracking
 ; the heap and the environment
 (define heap-ptr 1024)
 (define env-ptr 1025)
-(define top-level-env '(("cons" "car" "cdr" "+" "-" "*")))
+(define top-level-env '(("=" "cons" "car" "cdr" "+" "-" "*")))
 
 ; this is the compiler internal notion of what instruction
 ; is currently being written
@@ -48,8 +68,10 @@
 (define increment-ip (lambda ()
   (set! instruction-pointer (+ 1 instruction-pointer))))
 
+(define label-counter 0)
 (define fresh-label (lambda ()
-		      (string-append "__anonymous" (number->string instruction-pointer))
+		      (set! label-counter (+ label-counter 1))
+		      (string-append "__anonymous" (number->string label-counter))
 		      ))
 
 ; append an instruction to the ouptut stream
@@ -222,7 +244,7 @@
 	  (u-call-cdr)
 	  (assembly-env-cell-idx (- idx 1))))))
 
-(define assembly-env-cell
+(define assembly-env-cell-helper
   (lambda (depth idx)
     (if (= depth 0)
 	(begin
@@ -230,7 +252,12 @@
 	  (assembly-env-cell-idx idx))
 	(begin
 	  (u-call-cdr)
-	  (assembly-env-cell (- depth 1) idx)))))
+	  (assembly-env-cell-helper (- depth 1) idx)))))
+
+(define assembly-env-cell
+  (lambda (depth idx)
+    (append-instructions (list "PUSH" env-ptr "LOAD"))
+    (assembly-env-cell-helper depth idx)))
 
 (define assembly-env-val 
   (lambda (depth idx)
@@ -286,10 +313,7 @@
   (lambda (r env)
     (let ((i (lookup-reference r env)))
       (if i 
-	  (begin
-	    (append-instructions 
-	     (list "PUSH" env-ptr "LOAD"))
-	    (assembly-env-val (car i) (cdr i)))
+	  (assembly-env-val (car i) (cdr i))
 	  ; this is an error
 	  (begin
 	    (display (string-append "Undefined symbol: " r))
@@ -356,21 +380,21 @@
 ; when we can detect application of a builtin
 ; we can avoid function call overhead and just inline the assembly
 (define compile-if
-  (lambda (l env cont)
+  (lambda (l env)
     (let ((false-label (fresh-label))
 	  (join-label (fresh-label)))
-      (let ((r1 (compile-sexp (car l) env))
+      (let ((r1 (compile-sexp (car (cdr l)) env))
 	    (x  (append-instructions 
 		 (list "PUSH" negative-false-value
 		       "ADD"
 		       "PUSH" (string-append "@" false-label)
 		       "JZ")))
-	    (r2 (compile-sexp (car (cdr l)) env))
+	    (r2 (compile-sexp (car (cdr (cdr l))) env))
 	    (y  (append-instructions 
 		 (list "PUSH" (string-append "@" join-label)
 		       "JMP"
 		       (string-append ":" false-label))))
-	    (r3 (compile-sexp (car (cdr (cdr l))) env)))
+	    (r3 (compile-sexp (car (cdr (cdr (cdr l)))) env)))
 	(append-instruction (string-append ":" join-label))
 	(lambda ()
 	  (do-compile-task r1)
@@ -431,20 +455,19 @@
 	   "ROT"))                      ; stack is (rp  cdr car)
     (assembly-cons)                     ; this is the internal cons used when building arg lists
     (assembly-funret)                   
-    (append-instructions                ; this is the exposed cons, it plays a little trick
-     (list ":__cons"                    ; with the environment list by loading the second arg,
-	   "PUSH" env-ptr "LOAD"))      ; grabbing the cons box containing the first arg,
+    (append-instruction ":__cons")      ; this is the exposed cons, it plays a little trick
+					; with the environment list by loading the second arg,
+					; grabbing the cons box containing the first arg,
     (assembly-env-val 0 1)              ; then overwriting the cdr pointer and returning.
-    (append-instructions                ; this is safe since the cons boxes surrounding the 
-     (list "PUSH" env-ptr "LOAD"))      ; arguments are allocated in assembly-funcall
+					; this is safe since the cons boxes surrounding the 
+					; arguments are allocated in assembly-funcall
     (assembly-env-cell 0 0)             ; so it is guaranteed to not be shared.
     (append-instructions                ; stack is (cdr &car)
      (list "DUP"                        ; (cdr &car* &car*)                       
 	   "ROT"                        ; (&car* cdr &car*)
 	   "PUSH" type-mask "BAND"      ; (&car* cdr &car)
 	   "PUSH" 1 "ADD" "STOR"))      
-    (assembly-funret)
-					
+    (assembly-funret)					
 
     (append-instructions
      (list ":car" "@__nil" "@__car"     ; closure cell	   
@@ -453,8 +476,7 @@
 	   "SWAP"                       ; (rp arg)
 	   "PUSH" "@__car_body"         ; (rp arg __car_body)
 	   "JMP"                        ; jump to the body
-	   ":__car"                     ; closure entry point (arg is in env)
-	   "PUSH" env-ptr "LOAD"))      ; stack is (renv rp ep)
+	   ":__car"))                   ; closure entry point (arg is in env)
     (assembly-env-val 0 0)              ; stack is (renv rp arg)
     (append-instruction ":__car_body")  ; now we're at the body
     (assembly-car)                      ; dump the assembly for car
@@ -467,8 +489,7 @@
 	   "SWAP"
 	   "PUSH" "@__cdr_body"
 	   "JMP"
-	   ":__cdr"
-	   "PUSH" env-ptr "LOAD"))
+	   ":__cdr"))
     (assembly-env-val 0 0)
     (append-instruction ":__cdr_body")
     (assembly-cdr)
@@ -483,6 +504,8 @@
     (append-instruction "ADD")
     (assembly-funret)
 
+    ; the vm doesn't actually define subtraction, 
+    ; we multiply by -1 and add.
     (append-instructions
      (list ":subtract" "@__nil" "@__subtract :__subtract"))
     (assembly-env-val 0 0)
@@ -496,6 +519,22 @@
     (assembly-env-val 0 1)
     (append-instruction "MUL")
     (assembly-funret)
+
+    (append-instructions
+     (list ":equal" "@__initial_env" "@__equal" ":__equal"))
+    (assembly-env-val 0 0)
+    (assembly-env-val 0 1)
+    (append-instructions
+     (list "PUSH" "-1" "MUL" "ADD"      ; if only there were a subtraction 
+					; instruction!
+	   "PUSH" "@__equal_true" "JZ" 
+    ; they weren't equal! push false and exit
+	   "PUSH" false-value)) 
+    (assembly-funret)
+    ; they were equal! push true and exit
+    (append-instructions
+     (list ":__equal_true" "PUSH" true-value))
+    (assembly-funret)
     )
 )
 
@@ -507,6 +546,8 @@
       "PUSH" "@__main" "JMP"
       ; here's the definition of nil (we're at address
       ; 3 at the moment so 0x10000003 is @__nil & ptr-flag).
+      ; note that these will all break if the object representation
+      ; changes.
       ":__nil"
       "0x80000003" "0x80000003"
       "@multiply"  "0x80000003"
@@ -515,8 +556,9 @@
       "@cdr"       "0x80000009"
       "@car"       "0x8000000b"
       "@cons"      "0x8000000d"
+      "@equal"     "0x8000000f"
       ":__initial_env"
-      "0x8000000f" "@__nil" 
+      "0x80000011" "@__nil" 
       ":__top_level_env_tail"
       "0x80000006"
       ))
