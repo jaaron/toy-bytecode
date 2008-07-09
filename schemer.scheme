@@ -339,7 +339,7 @@
 ; code is statically defined below initial heap pointer but in order
 ; to support eval we'll have to do something more clever.
 (define compile-lambda 
-  (lambda (l env)
+  (lambda (l env rest)
     (let ((label (fresh-label)))
       (append-instructions
        (list "PUSH" (string-append "@" label)
@@ -347,22 +347,22 @@
       (u-call-cons)
       (lambda ()	
 	(append-instruction (string-append ":" label))
-	(let ((r (compile-sequence (cdr (cdr l)) (cons (car (cdr l)) env)) ))
+	(let ((r (compile-sequence (cdr (cdr l)) (cons (car (cdr l)) env) #f) ))
 	  (assembly-funret) 
 	  r)	
 	)
       )))
 
 (define compile-begin
-  (lambda (l env) (compile-sequence (cdr l) env)))
+  (lambda (l env rest) (compile-sequence (cdr l) env rest)))
 
 (define compile-sequence 
-  (lambda (l env)
+  (lambda (l env rest)
     (if (null? l) #f
-	(let ((r1 (compile-sexp (car l) env)))
+	(let ((r1 (compile-sexp (car l) env (if (null? (cdr l)) rest #t) )))
 	  (if (not (null? (cdr l)))
 	      (append-instruction "POP"))
-	  (let ((r2 (compile-sequence (cdr l) env)))
+	  (let ((r2 (compile-sequence (cdr l) env rest)))
 	    (lambda ()
 	      (do-compile-task r1)
 	      (do-compile-task r2)
@@ -371,9 +371,9 @@
 ; this is right, except that it makes 
 ; define not work quite the way it is supposed to.
 (define compile-define
-  (lambda (l env)
+  (lambda (l env rest)
     (let ((v (lookup-reference (car (cdr l)) env))
-	  (r (compile-sexp (car (cdr (cdr l))) env)))
+	  (r (compile-sexp (car (cdr (cdr l))) env #t)))
       (if v 
 	  (begin
 	    (assembly-env-cell (car v) (cdr v))
@@ -396,21 +396,19 @@
 ; when we can detect application of a builtin
 ; we can avoid function call overhead and just inline the assembly
 (define compile-if
-  (lambda (l env)
+  (lambda (l env rest)
     (let ((false-label (fresh-label))
 	  (join-label (fresh-label)))
-      (let ((r1 (compile-sexp (car (cdr l)) env))
+      (let ((r1 (compile-sexp (car (cdr l)) env #t))
 	    (x  (append-instructions 
 		 (list "PUSH" negative-false-value
 		       "ADD"
 		       "PUSH" (string-append "@" false-label)
 		       "JZ")))
-	    (r2 (compile-sexp (car (cdr (cdr l))) env))
-	    (y  (append-instructions 
-		 (list "PUSH" (string-append "@" join-label)
-		       "JMP"
-		       (string-append ":" false-label))))
-	    (r3 (compile-sexp (car (cdr (cdr (cdr l)))) env)))
+	    (r2 (compile-sexp (car (cdr (cdr l))) env rest))
+	    (y  (append-instructions (list "PUSH" (string-append "@" join-label) "JMP"
+					   (string-append ":" false-label))))
+	    (r3 (compile-sexp (car (cdr (cdr (cdr l)))) env rest)))
 	(append-instruction (string-append ":" join-label))
 	(lambda ()
 	  (do-compile-task r1)
@@ -425,7 +423,7 @@
     (if (null? l) 
 	(begin (assembly-nil) #f)
 	(let ((r1 (compile-arguments (cdr l) env))
-	      (r2 (compile-sexp (car l) env)))
+	      (r2 (compile-sexp (car l) env #t)))
 	  (u-call-cons)
 	  (lambda () 
 	    (do-compile-task r1)
@@ -433,21 +431,25 @@
 	    )))))
 
 (define compile-list
-  (lambda (l env)
+  (lambda (l env rest)
     (let ((s (find-builtin (car l) (builtin-forms))))
       (if s 
-	  (s l env)
+	  (s l env rest)
 	  (let ((r1 (compile-arguments (cdr l) env))
-		(r2 (compile-sexp (car l) env)))
-	    (assembly-funcall)
+		(r2 (compile-sexp (car l) env #t)))
+;	    (assembly-funcall)
+	    (if rest
+		(assembly-funcall)
+		(assembly-tailcall)
+		)
 	    (lambda ()
 	      (do-compile-task r1)
 	      (do-compile-task r2)))))))
 
 (define compile-sexp 
-  (lambda (s env) 
+  (lambda (s env rest) 
     (if (list? s) 
-	(compile-list s env) 
+	(compile-list s env rest) 
 	(compile-atom s env))))
 
 
@@ -595,7 +597,7 @@
   (lambda (ch)
     (let ((sp (read-sexp ch)))
       (if (car sp)
-	  (let ((r (compile-sexp (car sp) top-level-env)))
+	  (let ((r (compile-sexp (car sp) top-level-env #t)))
 	    (do-compile-task 
 	     (lambda () 
 	       (compiler-run (cdr sp)) r)))

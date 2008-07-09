@@ -1,141 +1,541 @@
-# Labels are fully supported
-# :label defines a label
-# @label is the address of the label
-# and 
-# >label is 2 less than the offset of the
-# label from the current location. This is 
-# for relative jumps so that:
-#    PUSH >label
-#    JMP
-# will end up in the right place (since the 
-# JMP computes its target as an offset from 
-# the pc at the time JMP is evaluated, and the
-# pc is incremented before the JMP is evaluated).
-
-PUSH @main
-CALL
-END
-
-# base = 4
-:factorial
-SWAP        # get the argument 
-DUP         # duplicate 
-PUSH >factorial_escape # 9
-JZ          # jump to the escape condition 
-DUP 
-PUSH -1 
-ADD        # subtract the one 
-PUSH @factorial
-CALL       # recursive call 
-MUL         # multiply by n 
-RET         # return 
-			   
-# factoral+14: escape case 
-:factorial_escape
-POP     # pop the zero 
-PUSH 1  # push a one 
-RET     # and return  
-
-# factorial + 18 = 22
-# readS 
-# reads a newline terminated string into an array
-# of packed characters  argument is address at which
-# to store the string. 
-:readS
-SWAP # get the argument 
-DUP  # duplicate for return value 
-
-:read_loop
-DUP  # duplicate for subsequent storing 
-
-# readS + 3
-# get the first character of 
-# in the packed word 
-GETC
+PUSH
+@__main
+JMP
+:__nil
+0x80000003
+0x80000003
+@multiply
+0x80000003
+@subtract
+0x80000005
+@add
+0x80000007
+@cdr
+0x80000009
+@car
+0x8000000b
+@cons
+0x8000000d
+@equal
+0x8000000f
+:__initial_env
+0x80000011
+@__nil
+:__top_level_env_tail
+0x80000006
+:cons
+@__nil
+@__cons
+:__u_cons
+ROT
+PUSH
+1024
+LOAD
 DUP
-PUSH -10
-ADD
-PUSH >read_escape1 # 43 # read a \n store and exit
-JZ
-PUSH  24 
-SHL
-
-# readS+14:
-# get the second character of the packet word 
-GETC 
-DUP
-PUSH -10
-ADD
-PUSH >read_escape2 # 38 # read a \n
-JZ      # do the pack store and exit 
-PUSH 16
-SHL
-BOR
-
-# readS + 26:
-# get the third chracter 
-GETC
-DUP
-PUSH -10
-ADD
-PUSH >read_escape2 # 26 # read a \n
-JZ      # do the pack store and exit 
-PUSH 8
-SHL
-BOR
-
-# readS + 38:
-# get the fourth character 
-GETC
-DUP
-PUSH -10
-ADD
-PUSH >read_escape2 # 14 # read a \n
-JZ      # do the store and exit  
-BOR
+ROT
 STOR
-PUSH 1
+DUP
+PUSH
+1
 ADD
-PUSH >read_loop
-JMP     # jump to the top of loop 
-			   
-# readS + 54: 
-# we were trying to read the first
-# byte of the a new word but we got 
-# a \n so pop the \n and push a 0
-:read_escape1
-POP
-PUSH 0
+SWAP
+ROT
+DUP
+ROT
 STOR
-POP 
+PUSH
+1
+ADD
+PUSH
+1024
+STOR
+PUSH
+0x80000000
+BOR
 RET
-
-# readS + 60:
-# we read a \n and the top of stack has a 
-# word with the null byte that we need to store
-:read_escape2
-POP
-STOR
-POP  # pop the duplicate storage address
-RET 
-
-# readS + 64 = 21 + 64 = 86 
-
-# read a string and print it 
-:main
-PUSH 62 # '>'
-PCHR
-PUSH 32 # ' '
-PCHR
-PUSH 1002
-PUSH @readS
-CALL 
-PSTR
-
-# calculate factorial of the argument
-PUSH 5 
-PUSH @factorial
+:__cons
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+@__u_cdr
 CALL
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+DUP
+ROT
+PUSH
+0x7fffffff
+BAND
+PUSH
+1
+ADD
+STOR
+RET
+:car
+@__nil
+@__car
+:__u_car
+SWAP
+PUSH
+@__car_body
+JMP
+:__car
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+:__car_body
+PUSH
+0x7fffffff
+BAND
+LOAD
+RET
+:cdr
+@__nil
+@__cdr
+:__u_cdr
+SWAP
+PUSH
+@__cdr_body
+JMP
+:__cdr
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+:__cdr_body
+PUSH
+0x7fffffff
+BAND
+PUSH
+1
+ADD
+LOAD
+RET
+:add
+@__nil
+@__add :__add
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+@__u_cdr
+CALL
+PUSH
+0x7fffffff
+BAND
+LOAD
+ADD
+RET
+:subtract
+@__nil
+@__subtract :__subtract
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+@__u_cdr
+CALL
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+-1
+MUL
+ADD
+RET
+:multiply
+@__nil
+@__multiply
+:__multiply
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+@__u_cdr
+CALL
+PUSH
+0x7fffffff
+BAND
+LOAD
+MUL
+RET
+:equal
+@__initial_env
+@__equal
+:__equal
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+@__u_cdr
+CALL
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+-1
+MUL
+ADD
+PUSH
+@__equal_true
+JZ
+PUSH
+0
+RET
+:__equal_true
+PUSH
+1
+RET
+:__main
+PUSH
+2048
+PUSH
+1024
+STOR
+PUSH
+@__initial_env
+PUSH
+0x80000000
+BOR
+PUSH
+1025
+STOR
+PUSH
+@__anonymous1
+PUSH
+1025
+LOAD
+PUSH
+@__u_cons
+CALL
+PUSH
+@__nil
+LOAD
+SWAP
+PUSH
+@__u_cons
+CALL
+DUP
+PUSH
+@__top_level_env_tail
+LOAD
+PUSH
+0x7fffffff
+BAND
+STOR
+PUSH
+1
+ADD
+PUSH
+@__top_level_env_tail
+STOR
+PUSH
+@__nil
+LOAD
+PUSH
+1
+PUSH
+@__u_cons
+CALL
+PUSH
+7
+PUSH
+@__u_cons
+CALL
+PUSH
+8
+PUSH
+@__u_cons
+CALL
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+@__u_cdr
+CALL
+PUSH
+@__u_cdr
+CALL
+PUSH
+@__u_cdr
+CALL
+PUSH
+@__u_cdr
+CALL
+PUSH
+@__u_cdr
+CALL
+PUSH
+@__u_cdr
+CALL
+PUSH
+@__u_cdr
+CALL
+PUSH
+0x7fffffff
+BAND
+LOAD
+DUP
+PUSH
+0x7fffffff
+BAND
+LOAD
+SWAP
+ROT
+SWAP
+PUSH
+@__u_cons
+CALL
+PUSH
+1025
+LOAD
+SWAP
+PUSH
+1025
+STOR
+SWAP
+PUSH
+@__u_cdr
+CALL
+CALL
+SWAP
+PUSH
+1025
+STOR
+DUP
+PUSH
+0x7fffffff
+BAND
+LOAD
+SWAP
+ROT
+SWAP
+PUSH
+@__u_cons
+CALL
+PUSH
+1025
+LOAD
+SWAP
+PUSH
+1025
+STOR
+SWAP
+PUSH
+@__u_cdr
+CALL
+CALL
+SWAP
+PUSH
+1025
+STOR
 PINT
-PUSH 0 # function have to return a value!
+END
+:__anonymous1
+PUSH
+@__nil
+LOAD
+PUSH
+0
+PUSH
+@__u_cons
+CALL
+PUSH
+1025
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+@__u_cdr
+CALL
+PUSH
+@__u_cdr
+CALL
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+@__u_cons
+CALL
+PUSH
+1025
+LOAD
+PUSH
+@__u_cdr
+CALL
+PUSH
+0x7fffffff
+BAND
+LOAD
+PUSH
+0x7fffffff
+BAND
+LOAD
+DUP
+PUSH
+0x7fffffff
+BAND
+LOAD
+SWAP
+ROT
+SWAP
+PUSH
+@__u_cons
+CALL
+PUSH
+1025
+LOAD
+SWAP
+PUSH
+1025
+STOR
+SWAP
+PUSH
+@__u_cdr
+CALL
+CALL
+SWAP
+PUSH
+1025
+STOR
+DUP
+PUSH
+0x7fffffff
+BAND
+LOAD
+SWAP
+ROT
+SWAP
+PUSH
+@__u_cons
+CALL
+PUSH
+1025
+LOAD
+SWAP
+PUSH
+1025
+STOR
+SWAP
+PUSH
+@__u_cdr
+CALL
+CALL
+SWAP
+PUSH
+1025
+STOR
+PUSH
+0
+ADD
+PUSH
+@__anonymous2
+JZ
+PUSH
+5
+PUSH
+@__anonymous3
+JMP
+:__anonymous2
+PUSH
+15
+:__anonymous3
 RET
