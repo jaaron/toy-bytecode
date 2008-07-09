@@ -19,7 +19,8 @@
     (list
      (cons "lambda" compile-lambda)
      (cons "if"     compile-if)
-     (cons "define" compile-define)   
+     (cons "define" compile-define)  
+     (cons "begin"  compile-begin)
      )
     ))
 
@@ -346,11 +347,26 @@
       (u-call-cons)
       (lambda ()	
 	(append-instruction (string-append ":" label))
-	(let ((r (compile-sexp (car (cdr (cdr l))) (cons (car (cdr l)) env)) ))
+	(let ((r (compile-sequence (cdr (cdr l)) (cons (car (cdr l)) env)) ))
 	  (assembly-funret) 
 	  r)	
 	)
       )))
+
+(define compile-begin
+  (lambda (l env) (compile-sequence (cdr l) env)))
+
+(define compile-sequence 
+  (lambda (l env)
+    (if (null? l) #f
+	(let ((r1 (compile-sexp (car l) env)))
+	  (if (not (null? (cdr l)))
+	      (append-instruction "POP"))
+	  (let ((r2 (compile-sequence (cdr l) env)))
+	    (lambda ()
+	      (do-compile-task r1)
+	      (do-compile-task r2)
+	      ))))))
 
 ; this is right, except that it makes 
 ; define not work quite the way it is supposed to.
@@ -577,54 +593,45 @@
 
 (define compiler-run 
   (lambda (ch)
-    (let ((sp (read-sexp ch (lambda (x) x))))
+    (let ((sp (read-sexp ch)))
       (if (car sp)
 	  (let ((r (compile-sexp (car sp) top-level-env)))
 	    (do-compile-task 
 	     (lambda () 
-	       (compiler-run (if (isspace (cdr sp)) (next-non-ws) (cdr sp))) r)))
+	       (compiler-run (cdr sp)) r)))
 	  (append-instructions (list "PINT" "END"))))))
 
-(define read-atom-helper (lambda (ch cont)
-  (if (or (isspace ch) (char=? ch #\) ))
-      (cont  (cons #f ch) ) 
-      (read-atom-helper (read-char) (lambda (x)
-			       (cont 
-				(cons (if (car x)				    
-					  (cons ch (car x))
-					  (cons ch '())	    
-					  ) (cdr x))  )))
-      )
-  )
-  )
+(define read-atom-helper (lambda (ch)
+  (if (or (eof-object? ch) (or (isspace ch) (char=? ch #\) )))
+      (cons #f ch)
+      (let ((x (read-atom-helper (read-char))))
+	(cons (if (car x)
+		  (cons ch (car x))
+		  (cons ch '())) (cdr x))))))
 
-(define read-atom (lambda (ch cont) 
-		    (read-atom-helper ch (lambda (x) 
-					   (cont (if (car x) 
-						     (cons (list->string (car x)) (cdr x)) x))))))
+(define read-atom (lambda (ch) 
+		    (let ((x (read-atom-helper ch)))
+		      (if (car x) 
+			  (cons (list->string (car x)) (cdr x))
+			  x))))
 
 (define read-list 
-  (lambda (atc cont)
+  (lambda (atc)
     (if (char=? (cdr atc) #\) )
-	(cont (cons (if (car atc) (cons (car atc) '()) '()) (next-non-ws) ))
-	(read-sexp (next-non-ws)
-		   (lambda (x)
-		     (read-list x
-				(lambda (y) 
-				  (cont (cons (cons (car atc) (car y)) (cdr y)))
-				  )
-				)
-		     )
-		   )
-	)
-    )
-  )
-  
-(define read-sexp (lambda (ch cont)
+	(cons (if (car atc) (cons (car atc) '()) '()) (next-non-ws) )
+	(let ((x (read-list (read-sexp (cdr atc)))))
+	  (cons 
+	   (if (car atc)
+	       (cons (car atc) (car x))
+	       (car x)) (cdr x))))))
+
+(define read-sexp (lambda (ch)
 		    (if (char? ch)
-			(if (char=? ch #\( )
-			    (read-sexp (next-non-ws) (lambda (x) (read-list x cont)))
-			    (read-atom ch cont)
+			(if (isspace ch)
+			    (read-sexp (next-non-ws))
+			    (if (char=? ch #\( )
+				(read-list (read-sexp (next-non-ws)))
+				(read-atom ch))
 			    )
 			(cons #f ch)
 		    ))

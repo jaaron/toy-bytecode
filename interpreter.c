@@ -53,13 +53,15 @@
   }									\
   }while(0)
 
+#define IDX_FROM_INS(i) ((i & 0x3fff) >> 2)
+
 #ifdef __TRACE__
 
 #define NEXT do{						\
     fprintf(stderr,"==================================\n");	\
     fprintf(stderr,"initial pc: %d instruction: %d ",		\
-	    pc-memory, *pc);					\
-    goto *instructions[ntohl(*pc++)];				\
+	    pc-memory, IDX_FROM_INS(*pc));			\
+    goto *instructions[IDX_FROM_INS(*pc++)];			\
   }while(0)
 
 #define INSTRUCTION(n,x)			\
@@ -71,14 +73,12 @@
 
 #else /* quiet versions! */
 
-#define NEXT goto *instructions[ntohl(*pc++)]
+#define NEXT goto *instructions[IDX_FROM_INS(*pc++)]
 #define INSTRUCTION(n,x)			\
   n:						\
   x;						\
   NEXT
 #endif
-
-#define READ_CHAR(c) I_PUSH, -c, I_PLUS, I_JZ, 1, I_END
 
 int main(int argc, char *argv[])
 {
