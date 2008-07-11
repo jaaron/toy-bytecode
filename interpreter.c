@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <errno.h>
 #include "interpreter.h"
 
 /* Internal macros */
@@ -124,6 +125,14 @@
 #define ASSERT_TYPE(x,t)     if(unlikely(CELL_TYPE(x) != t)){TYPE_ERROR(t);}
 #define ASSERT_NOT_TYPE(x,t) if(unlikely(CELL_TYPE(x) == t)){TYPE_ERROR(!t);}
 
+#define HEAP_CHECK(n) do{				\
+  long __tmp = n;					\
+  if(hp + __tmp > sp){					\
+    fprintf(stderr, "Unable to allocate memory!\n");	\
+    exit(-ENOMEM);					\
+  }							\
+  }while(0);
+
 #define TYPE_ERROR(t) do{			\
     fprintf(stderr, "Type error. Expected "#t);	\
     DO_DUMP(stderr);				\
@@ -140,7 +149,7 @@ int main(int argc, char *argv[])
     /* Control flow */
     (long)&&CALL,
     (long)&&RET,  (long)&&JMP,  
-    (long)&&JZ,    (long)&&END,
+    (long)&&JEQ,    (long)&&END,
     
     /* Arithmetic */
     (long)&&PLUS, (long)&&MUL, 
@@ -148,7 +157,7 @@ int main(int argc, char *argv[])
     (long)&&BOR,  (long)&&BAND,
     
     /* Reading and writing memory */
-    (long)&&STOR, (long)&&LOAD,
+    (long)&&STOR, (long)&&LOAD, (long)&&ALOC,
     
     /* I/0 */
     (long)&&GETC, (long)&&DUMP, 
@@ -156,12 +165,16 @@ int main(int argc, char *argv[])
   };
 
   int fd;
-  long memory[MEM_SIZE];
+  long memory1[MEM_SIZE], memory2[MEM_SIZE], *memory = memory1;
   long *sp = &memory[MEM_SIZE-1];
   long *pc = memory;
-  long nread;
-  fd = open(argv[1], O_RDONLY);  
-  nread = read(fd, memory, MEM_SIZE*sizeof(long));  
+  long *hp;
+  long  rr = MAKE_PTR(0,0); /* the root regiseter can be used by the language
+			       to store an additional root for gc (anything 
+			       on the stack is also treated as a root). */
+  long nread;  
+  fd    = argc > 1 ? open(argv[1], O_RDONLY) : STDIN_FILENO;
+  nread = read(fd, memory, MEM_SIZE*sizeof(long))/sizeof(long);  
 
   /* sweep through the program image converting
      everything to host byte order */
@@ -210,17 +223,15 @@ int main(int argc, char *argv[])
 	      }while(0)
 	      );
 
-  INSTRUCTION(JMP, do{
-      ASSERT_TYPE(STACK(0), PTR);
-      pc = memory + PTR_TARGET(STACK_POP());
-    }while(0)
-    );
+  INSTRUCTION(JMP, ASSERT_TYPE(STACK(0), PTR); pc = memory + PTR_TARGET(STACK_POP()));
 
-  INSTRUCTION(JZ,  
+  INSTRUCTION(JEQ,  
 	      do{
 		ASSERT_TYPE(STACK(0), PTR);
-		ASSERT_TYPE(STACK(1), NUM);
-		pc = NUM_TO_NATIVE(STACK(1)) ? pc : memory + PTR_TARGET(STACK(0)); STACK_POP() ; STACK_POP();
+		pc = STACK(1) ==  STACK(2) ? memory + PTR_TARGET(STACK(0)) : pc; 
+		STACK_POP(); 
+		STACK_POP();
+		STACK_POP();
 	      }while(0)
 	      );
   INSTRUCTION(END, return 0);
@@ -235,6 +246,12 @@ int main(int argc, char *argv[])
 		  STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) +  NUM_TO_NATIVE(STACK(0)), CELL_TYPE(STACK(1)));
 		  break;
 		case PTR:
+		  if(NUM_TO_NATIVE(STACK(0)) < 0){
+		    fprintf(stderr, "Invalid pointer arithmetic: negative offset %d is unallowed\n",
+			    NUM_TO_NATIVE(STACK(0)));
+		    DO_DUMP(stderr);
+		    exit(1);
+		  }
 		  if(PTR_SIZE(STACK(1)) > NUM_TO_NATIVE(STACK(0)) || 
 		     PTR_SIZE(STACK(1) == 0xff)){
 		    STACK(1) = MAKE_PTR(PTR_TARGET(STACK(1)) + NUM_TO_NATIVE(STACK(0)),
@@ -290,6 +307,15 @@ int main(int argc, char *argv[])
     }while(0)
     );
 
+  INSTRUCTION(ALOC, do{
+      long __tmp;
+      ASSERT_TYPE(STACK(0), NUM);
+      HEAP_CHECK(NUM_TO_NATIVE(STACK(0)));
+      __tmp = MAKE_PTR(hp - memory, STACK(0));
+      hp += NUM_TO_NATIVE(STACK(0));
+      STACK(0) = __tmp;
+    }while(0));
+
   INSTRUCTION(LOAD, ASSERT_TYPE(STACK(0), PTR); STACK(0) = memory[PTR_TARGET(STACK(0))]);
 
   /* I/O */
@@ -300,6 +326,6 @@ int main(int argc, char *argv[])
   return 0;
 }
 
-
-    
-    
+int gc(memory *m1, memory *m2, long *sp, long rr)
+{
+  

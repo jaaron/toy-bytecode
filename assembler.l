@@ -65,7 +65,7 @@ ROT   {out_buffer[words++] = PACK_VM_CONST(I_ROT); }
 CALL  {out_buffer[words++] = PACK_VM_CONST(I_CALL);}
 RET   {out_buffer[words++] = PACK_VM_CONST(I_RET); }
 JMP   {out_buffer[words++] = PACK_VM_CONST(I_JMP); }
-JZ    {out_buffer[words++] = PACK_VM_CONST(I_JZ);  }
+JEQ   {out_buffer[words++] = PACK_VM_CONST(I_JEQ); }
 END   {out_buffer[words++] = PACK_VM_CONST(I_END); }
 ADD   {out_buffer[words++] = PACK_VM_CONST(I_ADD); }
 MUL   {out_buffer[words++] = PACK_VM_CONST(I_MUL); }
@@ -75,6 +75,7 @@ BOR   {out_buffer[words++] = PACK_VM_CONST(I_BOR); }
 BAND  {out_buffer[words++] = PACK_VM_CONST(I_BAND);}
 STOR  {out_buffer[words++] = PACK_VM_CONST(I_STOR);}
 LOAD  {out_buffer[words++] = PACK_VM_CONST(I_LOAD);}
+ALOC  {out_buffer[words++] = PACK_VM_CONST(I_ALOC);}
 GETC  {out_buffer[words++] = PACK_VM_CONST(I_GETC);}
 DUMP  {out_buffer[words++] = PACK_VM_CONST(I_DUMP);}
 PINT  {out_buffer[words++] = PACK_VM_CONST(I_PINT);}
@@ -84,7 +85,7 @@ PCHR  {out_buffer[words++] = PACK_VM_CONST(I_PCHR);}
   int i;
   labels[nr_labels].txt = strdup(yytext+1);
   labels[nr_labels].dst = words;
-  printf("label %s at offset %d\n", yytext+1, words);
+  fprintf(stderr, "label %s at offset %d\n", yytext+1, words);
 
   for(i=0;i<nr_unresolved;i++){
     if(unresolved_labels[i].txt &&
@@ -127,7 +128,7 @@ int main(int argc, char *argv[])
   int i;
   int output_filedes = argc > 1 ? open(argv[1], O_WRONLY | O_CREAT) : STDOUT_FILENO;
   if(output_filedes < 0){
-    printf("Failed to open output file.  Dying\n");
+    fprintf(stderr, "Failed to open output file.  Dying\n");
     exit(1);
   }
   yylex();

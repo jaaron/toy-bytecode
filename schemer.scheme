@@ -62,7 +62,7 @@
 
 ; these are runtime constants used for tracking
 ; the heap and the environment
-(define heap-ptr (asm-pointer 1024 1))
+
 (define env-ptr  (asm-pointer 1025 1))
 (define top-level-env '(("=" "cons" "car" "cdr" "+" "-" "*")))
 
@@ -105,17 +105,12 @@
 ; (val)  -> (hp*) , hp' = hp+1, heap[hp] = val
 (define store-to-heap (lambda ()
 			(append-instructions
-			 (list "PUSH" heap-ptr "LOAD" ; load the current heap pointer (val hp)
-			       "DUP"                  ; (val hp hp)
-			       "ROT"                  ; (hp val hp)
-			       "STOR"                 ; (hp) val is stored
-			       "DUP"))                ; (hp hp)
-			(assembly-increment)          ; (hp (+ 1 hp)) 
-			(append-instructions
-			 (list
-			       "PUSH" heap-ptr        ; (hp (+ 1 hp) &hp)
-			       "STOR"                 ; (hp) new heap pointer is stored
-			       ))))
+			 (list "PUSH" 1   ; (thing 1)
+			       "ALOC"     ; (thing hp)
+			       "DUP"      ; (thing hp hp)
+			       "ROT"      ; (hp thing hp)
+			       "STOR"))))
+
 			   
 ; assembly for the primitive list functions car, cdr, and cons
 ; (ptr*) -> ((car ptr))
@@ -128,8 +123,8 @@
 ; (cdr car) -> ((cons car cdr))
 (define assembly-cons (lambda ()
 			(append-instructions 
-			 (list "PUSH" heap-ptr       ; (cdr car &hp)
-			       "LOAD"                ; (cdr car hp)
+			 (list "PUSH" (asm-number 2) ; (cdr car 2)
+			       "ALOC"                ; (cdr car &hp)
 			       "DUP"                 ; (cdr car hp hp)
 			       "ROT"                 ; (cdr hp car hp)
 			       "STOR"                ; (cdr hp) car stored
@@ -138,15 +133,8 @@
 			(append-instructions
 			 (list "SWAP"                ; (cdr (+ hp 1) hp)
 			       "ROT"                 ; (hp cdr (+ hp 1))
-			       "DUP"                 ; (hp cdr (+ hp 1) (+ hp 1))
-			       "ROT"                 ; (hp (+ hp 1) cdr (+ hp 1))
-			       "STOR"))              ; (hp (+ hp 1))  cdr stored
-			(assembly-increment)         ; (hp (+ hp 2))
-			(append-instructions
-			 (list "PUSH" heap-ptr       ; (hp (+ hp 2) &hp)
-			       "STOR"                ; (hp) new hp stored
-			       )
-			 )))
+			       "STOR"))              ; (hp)  cdr stored
+			))
 
 
 ; top is the cons box to set, then the new value
@@ -398,10 +386,9 @@
 	  (join-label (fresh-label)))
       (let ((r1 (compile-sexp (car (cdr l)) env #t))
 	    (x  (append-instructions 
-		 (list "PUSH" negative-false-value
-		       "ADD"
+		 (list "PUSH" false-value
 		       "PUSH" (string-append "@" false-label)
-		       "JZ")))
+		       "JEQ")))
 	    (r2 (compile-sexp (car (cdr (cdr l))) env rest))
 	    (y  (append-instructions (list "PUSH" (string-append "@" join-label) "JMP"
 					   (string-append ":" false-label))))
@@ -539,9 +526,7 @@
     (assembly-env-val 0 0)
     (assembly-env-val 0 1)
     (append-instructions
-     (list "PUSH" (asm-number -1) "MUL" "ADD"      ; if only there were a subtraction 
-					           ; instruction!
-	   "PUSH" "@__equal_true" "JZ" 
+     (list "PUSH" "@__equal_true" "JEQ" 
     ; they weren't equal! push false and exit
 	   "PUSH" false-value)) 
     (assembly-funret)
@@ -580,12 +565,8 @@
      (append-instructions 
       (list 
        ":__main" ; now initialize the heap pointer to point somewhere
-       "PUSH" (asm-pointer 2048 -1)
-       "PUSH" heap-ptr ; set the initial heap pointer
-       "STOR"))
-     (append-instructions
-      (list "PUSH" "@__initial_env"
-	    "PUSH" env-ptr "STOR")) ; set the initial env pointer
+       "PUSH" "@__initial_env"
+       "PUSH" env-ptr "STOR")) ; set the initial env pointer
      ))
 
 
