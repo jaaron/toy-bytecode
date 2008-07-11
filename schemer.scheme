@@ -12,6 +12,12 @@
 		     (for-all? (lambda (x) (and (char>=? x #\0)  (char<=? x #\9)))
 			       (string->list str))))
 
+(define asm-number  (lambda (x) (string-append "n" (if (number? x) (number->string x) x))))
+(define asm-pointer (lambda (x y) (string-append "p" (if (number? x) (number->string x) x) 
+						 "," (if (number? x) (number->string y) y)
+						 )))
+(define asm-lang-const (lambda (x) (string-append "l" (if (number? x) (number->string x) x))))
+
 ; identifies functions that have special meaning
 ; to the compiler.
 (define builtin-forms 
@@ -51,16 +57,13 @@
 ; (LOAD, STORE, and ARITHMETIC), 
 ; PUSH would take an immediate numeric argument (and shift left by two)
 ; new instructions TOP, and TOC, and TOI would coerce between the types
-(define type-mask "0x7fffffff")
-(define ptr-flag  "0x80000000")
-(define true-value 1)
-(define false-value 0)
-(define negative-false-value 0)
+(define true-value (asm-lang-const 1))
+(define false-value (asm-lang-const 0))
 
 ; these are runtime constants used for tracking
 ; the heap and the environment
-(define heap-ptr 1024)
-(define env-ptr 1025)
+(define heap-ptr (asm-pointer 1024 1))
+(define env-ptr  (asm-pointer 1025 1))
 (define top-level-env '(("=" "cons" "car" "cdr" "+" "-" "*")))
 
 ; this is the compiler internal notion of what instruction
@@ -93,6 +96,10 @@
 	  (append-instruction (car inss))
 	  (append-instructions (cdr inss))))))
 
+(define assembly-increment (lambda ()
+		       (append-instructions 
+			(list "PUSH" (asm-number 1) "ADD"))))
+
 ; append assembly code for storing a value to the next free
 ; heap cell.
 ; (val)  -> (hp*) , hp' = hp+1, heap[hp] = val
@@ -102,27 +109,21 @@
 			       "DUP"                  ; (val hp hp)
 			       "ROT"                  ; (hp val hp)
 			       "STOR"                 ; (hp) val is stored
-			       "DUP"                  ; (hp hp)
-			       "PUSH" "1" "ADD"       ; (hp (+ 1 hp)) 
+			       "DUP"))                ; (hp hp)
+			(assembly-increment)          ; (hp (+ 1 hp)) 
+			(append-instructions
+			 (list
 			       "PUSH" heap-ptr        ; (hp (+ 1 hp) &hp)
 			       "STOR"                 ; (hp) new heap pointer is stored
-			       "PUSH" ptr-flag "BOR"  ; mark top of stack as a pointer
 			       ))))
-
 			   
 ; assembly for the primitive list functions car, cdr, and cons
 ; (ptr*) -> ((car ptr))
-(define assembly-car  (lambda () (append-instructions 
-				  (list "PUSH" type-mask
-					"BAND" "LOAD"))))
+(define assembly-car  (lambda () (append-instruction "LOAD")))
 
 ; (ptr*) -> ((cdr ptr))
-(define assembly-cdr  (lambda () (append-instructions 
-				  (list "PUSH" type-mask
-					"BAND"
-					"PUSH" "1" 
-					"ADD" 
-					"LOAD"))))
+(define assembly-cdr  (lambda () (assembly-increment) 
+			      (append-instruction "LOAD")))
 
 ; (cdr car) -> ((cons car cdr))
 (define assembly-cons (lambda ()
@@ -132,33 +133,28 @@
 			       "DUP"                 ; (cdr car hp hp)
 			       "ROT"                 ; (cdr hp car hp)
 			       "STOR"                ; (cdr hp) car stored
-			       "DUP"                 ; (cdr hp hp)
-			       "PUSH" "1"            ; (cdr hp hp 1)
-			       "ADD"                 ; (cdr hp (+ hp 1))
-			       "SWAP"                ; (cdr (+ hp 1) hp)
+			       "DUP"))               ; (cdr hp hp)
+			(assembly-increment)         ; (cdr hp (+ hp 1))
+			(append-instructions
+			 (list "SWAP"                ; (cdr (+ hp 1) hp)
 			       "ROT"                 ; (hp cdr (+ hp 1))
 			       "DUP"                 ; (hp cdr (+ hp 1) (+ hp 1))
 			       "ROT"                 ; (hp (+ hp 1) cdr (+ hp 1))
-			       "STOR"                ; (hp (+ hp 1))  cdr stored
-			       "PUSH" "1"            ; (hp (+ hp 1) 1)
-			       "ADD"                 ; (hp (+ hp 2))
-			       "PUSH" heap-ptr       ; (hp (+ hp 2) &hp)
+			       "STOR"))              ; (hp (+ hp 1))  cdr stored
+			(assembly-increment)         ; (hp (+ hp 2))
+			(append-instructions
+			 (list "PUSH" heap-ptr       ; (hp (+ hp 2) &hp)
 			       "STOR"                ; (hp) new hp stored
-			       "PUSH" ptr-flag       ; (hp ptr-flag)
-			       "BOR"                 ; (hp*)
 			       )
 			 )))
 
 
 ; top is the cons box to set, then the new value
 (define assembly-set-car 
-  (lambda ()
-    (append-instructions 
-     (list "PUSH" type-mask "BAND" "STOR"))))
+  (lambda () (append-instructions "STOR")))
 (define assembly-set-cdr 
   (lambda () 
-    (append-instructions
-     (list "PUSH" type-mask "BAND" "PUSH" "1" "ADD" "STOR"))))
+    (assembly-increment) (append-instruction "STOR")))
 
 ; these define how to call the three primitives car, cdr, and cons as
 ; part of larger compiler generated sequences (e.g., function application)
@@ -308,7 +304,7 @@
 
 
 (define compile-constant 
-  (lambda (c env) (append-instructions (list "PUSH" c)) #f))
+  (lambda (c env) (append-instructions (list "PUSH" (asm-number c))) #f))
 
 (define compile-reference 
   (lambda (r env)
@@ -387,9 +383,10 @@
 	    (append-instructions 
 	     (list
 	      "PUSH" "@__top_level_env_tail" 
-	      "LOAD" "PUSH" type-mask "BAND" "STOR"
-	      "PUSH" "1" 
-	      "ADD" "PUSH" "@__top_level_env_tail" "STOR"
+	      "LOAD" "STOR"))
+	    (assembly-increment)
+	    (append-instructions
+	     (list "PUSH" "@__top_level_env_tail" "STOR"
 	      ))))
 	  r)))
 
@@ -437,7 +434,6 @@
 	  (s l env rest)
 	  (let ((r1 (compile-arguments (cdr l) env))
 		(r2 (compile-sexp (car l) env #t)))
-;	    (assembly-funcall)
 	    (if rest
 		(assembly-funcall)
 		(assembly-tailcall)
@@ -481,10 +477,10 @@
 					; arguments are allocated in assembly-funcall
     (assembly-env-cell 0 0)             ; so it is guaranteed to not be shared.
     (append-instructions                ; stack is (cdr &car)
-     (list "DUP"                        ; (cdr &car* &car*)                       
-	   "ROT"                        ; (&car* cdr &car*)
-	   "PUSH" type-mask "BAND"      ; (&car* cdr &car)
-	   "PUSH" 1 "ADD" "STOR"))      
+     (list "DUP"                        ; (cdr &car &car)                       
+	   "ROT"))                      ; (&car cdr &car)
+    (assembly-increment)                ; (&car cdr &cdr)
+    (append-instruction "STOR")         ; (&car)
     (assembly-funret)					
 
     (append-instructions
@@ -528,7 +524,7 @@
      (list ":subtract" "@__nil" "@__subtract :__subtract"))
     (assembly-env-val 0 0)
     (assembly-env-val 0 1)    
-    (append-instructions (list "PUSH" "-1" "MUL" "ADD"))
+    (append-instructions (list "PUSH" (asm-number -1) "MUL" "ADD"))
     (assembly-funret)
 
     (append-instructions
@@ -543,8 +539,8 @@
     (assembly-env-val 0 0)
     (assembly-env-val 0 1)
     (append-instructions
-     (list "PUSH" "-1" "MUL" "ADD"      ; if only there were a subtraction 
-					; instruction!
+     (list "PUSH" (asm-number -1) "MUL" "ADD"      ; if only there were a subtraction 
+					           ; instruction!
 	   "PUSH" "@__equal_true" "JZ" 
     ; they weren't equal! push false and exit
 	   "PUSH" false-value)) 
@@ -567,28 +563,28 @@
       ; note that these will all break if the object representation
       ; changes.
       ":__nil"
-      "0x80000003" "0x80000003"
-      "@multiply"  "0x80000003"
-      "@subtract"  "0x80000005"
-      "@add"       "0x80000007"
-      "@cdr"       "0x80000009"
-      "@car"       "0x8000000b"
-      "@cons"      "0x8000000d"
-      "@equal"     "0x8000000f"
+      (asm-pointer 3 2) (asm-pointer 3 2)
+      "@multiply"  (asm-pointer 3 2)
+      "@subtract"  (asm-pointer 5 2)
+      "@add"       (asm-pointer 7 2)
+      "@cdr"       (asm-pointer 9 2)
+      "@car"       (asm-pointer 11 2)
+      "@cons"      (asm-pointer 13 2)
+      "@equal"     (asm-pointer 15 2)
       ":__initial_env"
-      "0x80000011" "@__nil" 
+      (asm-pointer 17 2) (asm-pointer 3 2)
       ":__top_level_env_tail"
-      "0x80000006"
+      (asm-pointer 6 1)
       ))
      (define-builtin-functions)
      (append-instructions 
       (list 
        ":__main" ; now initialize the heap pointer to point somewhere
-       "PUSH" "2048"
+       "PUSH" (asm-pointer 2048 -1)
        "PUSH" heap-ptr ; set the initial heap pointer
        "STOR"))
      (append-instructions
-      (list "PUSH" "@__initial_env" "PUSH" ptr-flag "BOR" 
+      (list "PUSH" "@__initial_env"
 	    "PUSH" env-ptr "STOR")) ; set the initial env pointer
      ))
 

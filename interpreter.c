@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include "interpreter.h"
 
 /* Internal macros */
@@ -42,18 +43,31 @@
 
 #define MEM_SIZE 4096
 
-#define DO_DUMP(stream) do{						\
-  int q=0;								\
-  fprintf(stream, "pc: %d, sp: %p height: %d\nstack:\n",		\
-	  pc-memory, sp, STACK_HEIGHT());				\
-  while(q < STACK_HEIGHT() ){						\
-    fprintf(stream, (STACK(q) > 0x80000000) ?				\
-	    "\t0x%lx\n" : "\t%ld\n", STACK(q));				\
-    q++;								\
-  }									\
+#define DO_DUMP(stream) do{					\
+    int q=0;							\
+    fprintf(stream, "pc: %d, sp: %p height: %d\nstack:\n",	\
+	    pc-memory, sp, STACK_HEIGHT());			\
+    while(q < STACK_HEIGHT() ){					\
+      switch(CELL_TYPE(STACK(q))){				\
+      case NUM:							\
+	fprintf(stream, "\t%d\n", NUM_TO_NATIVE(STACK(q)));	\
+	break;							\
+      case VCONST:						\
+	fprintf(stream, "\tvc: %d\n", NUM_TO_NATIVE(STACK(q)));	\
+	break;							\
+      case LCONST:						\
+	fprintf(stream, "\tlc: %d\n", NUM_TO_NATIVE(STACK(q)));	\
+	break;							\
+      case PTR:							\
+	fprintf(stream, "\tptr: %d sz: %d\n",			\
+		PTR_TARGET(STACK(q)), PTR_SIZE(STACK(q)));	\
+	break;							\
+      }								\
+      q++;							\
+    }								\
   }while(0)
 
-#define IDX_FROM_INS(i) ((i & 0x3fff) >> 2)
+#define IDX_FROM_INS(i) (i >> 2)
 
 #ifdef __TRACE__
 
@@ -80,6 +94,42 @@
   NEXT
 #endif
 
+#define NUM    0x0
+#define LCONST 0x1
+#define VCONST 0x2
+#define PTR    0x3
+
+#define unlikely(x)     __builtin_expect((x),0)
+#define likely(x)     __builtin_expect((x),1)
+
+#define MAKE_PTR(x,sz) ( (x) << 10 | ((sz)  & 0xff) << 2 | PTR)
+#define PTR_TARGET(x) (((unsigned long)x) >> 10)
+#define PTR_SIZE(x)   ((((unsigned long)x) >> 2) & 0xff)
+
+#define NUM_TO_NATIVE(x) ((x) >> 2 | NUM)
+#define MAKE_NUM(x) ((x) << 2)
+
+#define MAKE_CHAR(x) (((x) << 24) | VCONST)
+#define CHAR_TO_NATIVE(x) ((x) >> 24)
+
+// MAKE_TYPE doesn't work for pointers!
+#define MAKE_TYPE(x, t) ((x << 2) | t)
+
+#define CELL_TYPE(x) ((x) & 0x3)
+
+#define IS_NUM(x) (CELL_TYPE(x) == NUM)
+#define IS_PTR(x) (CELL_TYPE(x) == PTR)
+#define IS_CONST(x) ({char __tmp = CELL_TYPE(x); (x == LCONST) || (x == VCONST)})
+
+#define ASSERT_TYPE(x,t)     if(unlikely(CELL_TYPE(x) != t)){TYPE_ERROR(t);}
+#define ASSERT_NOT_TYPE(x,t) if(unlikely(CELL_TYPE(x) == t)){TYPE_ERROR(!t);}
+
+#define TYPE_ERROR(t) do{			\
+    fprintf(stderr, "Type error. Expected "#t);	\
+    DO_DUMP(stderr);				\
+    exit(-1);					\
+  }while(0);
+
 int main(int argc, char *argv[])
 {
   static long instructions[] = {
@@ -103,21 +153,26 @@ int main(int argc, char *argv[])
     /* I/0 */
     (long)&&GETC, (long)&&DUMP, 
     (long)&&PINT, (long)&&PCHR, 
-    (long)&&PSTR
   };
 
   int fd;
   long memory[MEM_SIZE];
   long *sp = &memory[MEM_SIZE-1];
   long *pc = memory;
-
+  long nread;
   fd = open(argv[1], O_RDONLY);  
-  read(fd, memory, MEM_SIZE*sizeof(long));  
+  nread = read(fd, memory, MEM_SIZE*sizeof(long));  
+
+  /* sweep through the program image converting
+     everything to host byte order */
+  for(; nread > 0 ; nread--){
+    memory[nread-1] = ntohl(memory[nread-1]);
+  }
 
   NEXT;
 
   /* stack manipulation */
-  INSTRUCTION(PUSH, STACK_PUSH(ntohl(*pc++)));
+  INSTRUCTION(PUSH, STACK_PUSH(*pc++));
   INSTRUCTION(POP, STACK_POP());
   INSTRUCTION(SWAP,
 	      do{
@@ -140,46 +195,108 @@ int main(int argc, char *argv[])
   INSTRUCTION(CALL,
 	      do{
 		long tmp = pc - memory;
-		pc = memory + STACK(0);
-		STACK(0) = tmp;
+		ASSERT_TYPE(STACK(0), PTR);
+		pc = memory + PTR_TARGET(STACK(0));
+		STACK(0) = MAKE_PTR(tmp,0);
 	      }while(0)
 	      );
 
   INSTRUCTION(RET,
 	      do{
-		pc = memory + STACK(1);
+		ASSERT_TYPE(STACK(1), PTR);
+		pc = memory + PTR_TARGET(STACK(1));
 		STACK(1) =  STACK(0);
 		STACK_POP();
 	      }while(0)
 	      );
-  INSTRUCTION(JMP, pc = memory + STACK_POP());
-  INSTRUCTION(JZ,  pc = STACK(1) ? pc : memory + STACK(0); STACK_POP() ; STACK_POP() );
+
+  INSTRUCTION(JMP, do{
+      ASSERT_TYPE(STACK(0), PTR);
+      pc = memory + PTR_TARGET(STACK_POP());
+    }while(0)
+    );
+
+  INSTRUCTION(JZ,  
+	      do{
+		ASSERT_TYPE(STACK(0), PTR);
+		ASSERT_TYPE(STACK(1), NUM);
+		pc = NUM_TO_NATIVE(STACK(1)) ? pc : memory + PTR_TARGET(STACK(0)); STACK_POP() ; STACK_POP();
+	      }while(0)
+	      );
   INSTRUCTION(END, return 0);
 
   /* arithmetic */
-  INSTRUCTION(PLUS, STACK(1) +=  STACK(0); STACK_POP());
-  INSTRUCTION(MUL,  STACK(1) *=  STACK(0); STACK_POP());
-  INSTRUCTION(SHL,  STACK(1) <<= STACK(0); STACK_POP());
-  INSTRUCTION(SHR,  STACK(1) >>= STACK(0); STACK_POP());
-  INSTRUCTION(BOR,  STACK(1) |=  STACK(0); STACK_POP());
-  INSTRUCTION(BAND, STACK(1) &=  STACK(0); STACK_POP());
+  INSTRUCTION(PLUS,
+	      ASSERT_TYPE(STACK(0), NUM);
+	      switch(CELL_TYPE(STACK(1))){
+		case VCONST:
+		case LCONST:
+		case NUM:
+		  STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) +  NUM_TO_NATIVE(STACK(0)), CELL_TYPE(STACK(1)));
+		  break;
+		case PTR:
+		  if(PTR_SIZE(STACK(1)) > NUM_TO_NATIVE(STACK(0)) || 
+		     PTR_SIZE(STACK(1) == 0xff)){
+		    STACK(1) = MAKE_PTR(PTR_TARGET(STACK(1)) + NUM_TO_NATIVE(STACK(0)),
+					(PTR_SIZE(STACK(1)) == 0xff ? 
+					 0xff : PTR_SIZE(STACK(1)) - NUM_TO_NATIVE(STACK(0))));
+		  }else{
+		    fprintf(stderr, "Invalid pointer arithmetic: offset %d is greater than size %d\n",
+			    NUM_TO_NATIVE(STACK(0)), PTR_SIZE(STACK(1)));
+		    DO_DUMP(stderr);
+		    exit(1);
+		  }
+		  break;
+		}
+		STACK_POP();
+	      );
+    
+  INSTRUCTION(MUL, do{
+      ASSERT_TYPE(STACK(0), NUM); ASSERT_NOT_TYPE(STACK(1), PTR);
+      STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) * NUM_TO_NATIVE(STACK(0)),CELL_TYPE(STACK(1))); 
+      STACK_POP();
+    }while(0));
+
+  INSTRUCTION(SHL, do{
+      ASSERT_TYPE(STACK(0), NUM); ASSERT_NOT_TYPE(STACK(1), PTR);
+      STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) << NUM_TO_NATIVE(STACK(0)),CELL_TYPE(STACK(1))); 
+      STACK_POP();
+    }while(0));
+
+  INSTRUCTION(SHR, do{
+      ASSERT_TYPE(STACK(0), NUM); ASSERT_NOT_TYPE(STACK(1), PTR);
+      STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) >> NUM_TO_NATIVE(STACK(0)),CELL_TYPE(STACK(1))); 
+      STACK_POP();
+    }while(0));
+
+  INSTRUCTION(BOR, do{
+      ASSERT_TYPE(STACK(0), NUM); ASSERT_NOT_TYPE(STACK(1), PTR);
+      STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) | NUM_TO_NATIVE(STACK(0)),CELL_TYPE(STACK(1))); 
+      STACK_POP();
+    }while(0));
+
+  INSTRUCTION(BAND, do{
+      ASSERT_TYPE(STACK(0), NUM); ASSERT_NOT_TYPE(STACK(1), PTR);
+      STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) & NUM_TO_NATIVE(STACK(0)),CELL_TYPE(STACK(1))); 
+      STACK_POP();
+    }while(0));
   
   /* memory access */
   INSTRUCTION(STOR, do{
-      memory[STACK(0)] = htonl(STACK(1));
+      ASSERT_TYPE(STACK(0), PTR);
+      memory[PTR_TARGET(STACK(0))] = STACK(1);
       STACK_POP();
       STACK_POP();
     }while(0)
     );
 
-  INSTRUCTION(LOAD, STACK(0) = ntohl(memory[STACK(0)]));
+  INSTRUCTION(LOAD, ASSERT_TYPE(STACK(0), PTR); STACK(0) = memory[PTR_TARGET(STACK(0))]);
 
   /* I/O */
-  INSTRUCTION(GETC, STACK_PUSH(getchar()));
+  INSTRUCTION(GETC, STACK_PUSH(MAKE_CHAR(getchar())));
   INSTRUCTION(DUMP, DO_DUMP(stdout));
-  INSTRUCTION(PINT, printf((STACK(0) > 0x80000000 ? "0x%lx\n" : "%ld\n"), STACK(0)); STACK_POP());
-  INSTRUCTION(PSTR, printf("%s\n", (char *)(&memory[STACK_POP()])));
-  INSTRUCTION(PCHR, putchar(STACK_POP()));
+  INSTRUCTION(PINT, ASSERT_TYPE(STACK(0), NUM);    printf("%ld\n", NUM_TO_NATIVE(STACK(0))); STACK_POP());
+  INSTRUCTION(PCHR, ASSERT_TYPE(STACK(0), VCONST); putchar(CHAR_TO_NATIVE(STACK_POP())));
   return 0;
 }
 
