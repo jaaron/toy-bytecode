@@ -325,7 +325,4 @@ int main(int argc, char *argv[])
   INSTRUCTION(PCHR, ASSERT_TYPE(STACK(0), VCONST); putchar(CHAR_TO_NATIVE(STACK_POP())));
   return 0;
 }
-
-int gc(memory *m1, memory *m2, long *sp, long rr)
-{
   
