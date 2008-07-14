@@ -359,20 +359,19 @@
 	    (u-call-set-car))
 	  (begin
 	    (set-car! top-level-env (append (car top-level-env) (list (car (cdr l)))))
-	    (assembly-nil)
-	    (append-instruction "SWAP")
-	    (u-call-cons)
-	    (append-instruction "DUP")
-	    (append-instructions 
-	     (list
-	      "PUSH" "@__top_level_env_tail" 
-	      "PUSH" (asm-number 0)
-	      "LOAD" 
-	      "PUSH" (asm-number 0)
-	      "STOR"
-	      "PUSH"
-	      "@__top_level_env_tail" 
-	      "PUSH" (asm-number 1) "STOR"
+	    (assembly-nil)                               ; (v nil)
+	    (append-instruction "SWAP")                  ; (nil v)
+	    (u-call-cons)                                ; ((v . nil))	    
+	    (append-instructions
+	     (list "DUP"                                 ; ((v . nil) (v . nil))
+		   "PUSH" "@__top_level_env_tail"        ; ((v . nil) (v . nil) &tl)
+		   "PUSH" (asm-number 0)                 ; ((v . nil) (v . nil) &tl 0)
+		   "LOAD"))                              ; ((v . nil) (v . nil) (? . nil))
+	    (u-call-set-cdr)                             ; ((v . nil))  -- list updated to (? . (v . nil))
+	    (append-instructions
+	     (list "PUSH" "@__top_level_env_tail"        ; ((v . nil) &tl)
+		   "PUSH" (asm-number 0)                 ; ((v . nil) &tl 0)
+		   "STOR"                                ; () ; tl = v. nil
 	      ))))
 	  r)))
 
@@ -557,7 +556,7 @@
       ":__initial_env"
       (asm-pointer 17 2) (asm-pointer 3 2)
       ":__top_level_env_tail"
-      (asm-pointer 6 1)
+      (asm-pointer 5 2)
       ))
      (define-builtin-functions)
      (append-instructions 

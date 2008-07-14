@@ -168,10 +168,11 @@ static long  rr = MAKE_NUM(0);         /* the root regiseter can be used by the 
 #ifdef __STATS__
 static long max_alloc = 0;
 #endif
+#define __GC_DEBUG__
 
 void gc(long *new_heap)
 {
-  long *mappings[MEM_SIZE];
+  long mappings[MEM_SIZE];
   long worklist[MEM_SIZE];
   long *work = worklist;
   int i;
@@ -189,8 +190,8 @@ void gc(long *new_heap)
      worklist is a stack of tree branches we need
      to walk
      mappings is a map from the old ptr target (offset in 
-         the memory array) to the native address of the 
-	 heap cell to which the data must be copied.
+         the memory array) to a pointer in the new heap
+	 to which the data must be copied.
 
      The way this works is whenever we encounter a pointer
      we check two things:
@@ -218,26 +219,25 @@ void gc(long *new_heap)
     *work = rr;
     work++;
     if(&memory[PTR_TARGET(rr)] >= prog_end){
-      mappings[PTR_TARGET(rr)] = hp;
-      rr = MAKE_PTR(hp - memory, PTR_SIZE(rr));
+      rr = mappings[PTR_TARGET(rr)] = MAKE_PTR(hp-memory, PTR_SIZE(rr));
       hp += PTR_SIZE(rr);
     }else{
-      mappings[PTR_TARGET(rr)] = memory + PTR_TARGET(rr);
+      mappings[PTR_TARGET(rr)] = rr;
     }
   }
 
   for(i=0;i<STACK_HEIGHT();i++){
-    if(CELL_TYPE(STACK(i)) == PTR && 
-       mappings[PTR_TARGET(STACK(i))] == (long *)0xffffffff){
+    if(CELL_TYPE(STACK(i)) == PTR && mappings[PTR_TARGET(STACK(i))] == 0xffffffff){
       *work = STACK(i);
       work++;
       if(&memory[PTR_TARGET(STACK(i))] >= prog_end){
-	mappings[PTR_TARGET(STACK(i))] = hp;
-	STACK(i) = MAKE_PTR(hp - memory, PTR_SIZE(STACK(i)));
+	STACK(i) = mappings[PTR_TARGET(STACK(i))] = MAKE_PTR(hp-memory, PTR_SIZE(STACK(i)));
 	hp += PTR_SIZE(STACK(i));
       }else{
-	mappings[PTR_TARGET(STACK(i))] = memory + PTR_TARGET(STACK(i));
+	mappings[PTR_TARGET(STACK(i))] = STACK(i);
       }
+    }else{
+      STACK(i) = mappings[PTR_TARGET(STACK(i))];
     }
   }
 
@@ -258,7 +258,7 @@ void gc(long *new_heap)
     for(i=0;i<PTR_SIZE(tmp);i++){
       val = memory[PTR_TARGET(tmp)+i];
       if(CELL_TYPE(val) == PTR){
-	if(mappings[PTR_TARGET(val)] == (long *)0xffffffff){
+	if(mappings[PTR_TARGET(val)] == 0xffffffff){
 	  /* the cell is a pointer we have not yet 
 	     created a mapping for.  That means we 
 	     must add it to the work list, and if it
@@ -273,16 +273,14 @@ void gc(long *new_heap)
 		    "\tOriginal: %d sz: %d\n"
 		    "\tFresh:    %d\n",
 		    PTR_TARGET(tmp),
-		    mappings[PTR_TARGET(tmp)] - memory,
+		    PTR_TARGET(mappings[PTR_TARGET(tmp)]),
 		    PTR_SIZE(tmp),
 		    i,
 		    PTR_TARGET(val), PTR_SIZE(val),
 		    hp - memory);
 #endif
 	    /* set the value of the cell we're copying to be the new pointer */
-	    *(mappings[PTR_TARGET(tmp)] + i) = MAKE_PTR(hp - memory, PTR_SIZE(val));
-	    /* install the reverse map */
-	    mappings[PTR_TARGET(val)] = hp;
+	    memory[PTR_TARGET(mappings[PTR_TARGET(tmp)]) + i] = mappings[PTR_TARGET(val)] = MAKE_PTR(hp - memory, PTR_SIZE(val));
 	    /* update the heap pointer */
 	    hp += PTR_SIZE(val);
 	  }else{
@@ -291,7 +289,7 @@ void gc(long *new_heap)
 		    "While copying ptr: %d -> %d (sz: %d) offset %d is inside prog txt.\n"
 		    "\tOriginal: %d sz: %d\n",
 		    PTR_TARGET(tmp),
-		    mappings[PTR_TARGET(tmp)] - memory,
+		    PTR_TARGET(mappings[PTR_TARGET(tmp)]),
 		    PTR_SIZE(tmp),
 		    i,
 		    PTR_TARGET(val), PTR_SIZE(val));
@@ -299,8 +297,7 @@ void gc(long *new_heap)
 	    /* the target of this pointer is in the program text */
 	    /* just perform a straight copy and set the value for this */	       
 	    /* cell in the mappings to the identity map */
-	    *(mappings[PTR_TARGET(tmp)] + i) = val;
-	    mappings[PTR_TARGET(val)] = &memory[PTR_TARGET(val)];
+	    memory[PTR_TARGET(mappings[PTR_TARGET(tmp)]) + i] = mappings[PTR_TARGET(val)] = val;
 	  }
 	}else{
 #ifdef __GC_DEBUG__
@@ -309,28 +306,38 @@ void gc(long *new_heap)
 		  "\tOriginal: %d sz: %d\n"
 		  "\tMapping:  %d\n",
 		  PTR_TARGET(tmp),
-		  mappings[PTR_TARGET(tmp)] - memory,
+		  PTR_TARGET(mappings[PTR_TARGET(tmp)]),
 		  PTR_SIZE(tmp),
 		  i,
 		  PTR_TARGET(val), PTR_SIZE(val),
-		  mappings[PTR_TARGET(val)] - memory);
+		  PTR_TARGET(mappings[PTR_TARGET(val)]));
 #endif
 	  /* this is a pointer, but we've seen it already.
 	     we create a new pointer cell based on the value in the
 	     mappings[] array */
-	  *(mappings[PTR_TARGET(tmp)] + i) = MAKE_PTR(mappings[PTR_TARGET(val)] - memory, 
-						      PTR_SIZE(val));
+	  memory[PTR_TARGET(mappings[PTR_TARGET(tmp)]) + i] = mappings[PTR_TARGET(val)];
 	}
       }else{
 	/* the cell isn't a pointer, we can just copy it */
-	*(mappings[PTR_TARGET(tmp)] + i) = val;
+	memory[PTR_TARGET(mappings[PTR_TARGET(tmp)]) + i] = val;
       }
     }
   }
+
+  for(i=0;i<prog_end-memory;i++){
+    if(CELL_TYPE(memory[i]) == PTR && mappings[PTR_TARGET(memory[i])] != 0xffffffff){
+      memory[i] = mappings[PTR_TARGET(memory[i])];
+    }
+  }
+
+  memset(new_heap == upper_heap ? prog_end : upper_heap, 0xabababab, heap_size*sizeof(long));
+
+
 #ifdef __GC_DEBUG__
   fprintf(stderr, "After gc %d cells available\n",
 	  heap_size - (hp - heap_base));
 #endif
+
 }
 
 int main(int argc, char *argv[])
@@ -364,7 +371,16 @@ int main(int argc, char *argv[])
   int fd;
   long nread;  
   fd         = argc > 1 ? open(argv[1], O_RDONLY) : STDIN_FILENO;
-  nread      = read(fd, memory, MEM_SIZE*sizeof(long))/sizeof(long);  
+  if(fd < 0){
+    printf("Open failed\n");
+    exit(1);
+  }
+  nread      = read(fd, memory, MEM_SIZE*sizeof(long));
+  if(nread < 0){
+    printf("Read failed\n");
+    exit(1);
+  }
+  nread /= 4;
   prog_end   = heap_base = hp = memory + nread;
   heap_size  = (MEM_SIZE - STACK_SIZE - nread)/2;
   upper_heap = hp + heap_size;
