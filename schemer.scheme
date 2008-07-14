@@ -105,20 +105,21 @@
 ; (val)  -> (hp*) , hp' = hp+1, heap[hp] = val
 (define store-to-heap (lambda ()
 			(append-instructions
-			 (list "PUSH" 1   ; (thing 1)
-			       "ALOC"     ; (thing hp)
-			       "DUP"      ; (thing hp hp)
-			       "ROT"      ; (hp thing hp)
+			 (list "PUSH" (asm-number 1)   ; (thing 1)
+			       "ALOC"                  ; (thing hp)
+			       "DUP"                   ; (thing hp hp)
+			       "ROT"                   ; (hp thing hp)
+			       "PUSH" (asm-number 0)   ; (hp thing hp 0)
 			       "STOR"))))
 
 			   
 ; assembly for the primitive list functions car, cdr, and cons
 ; (ptr*) -> ((car ptr))
-(define assembly-car  (lambda () (append-instruction "LOAD")))
+(define assembly-car  (lambda () (append-instructions (list "PUSH" (asm-number 0) "LOAD"))))
 
 ; (ptr*) -> ((cdr ptr))
-(define assembly-cdr  (lambda () (assembly-increment) 
-			      (append-instruction "LOAD")))
+(define assembly-cdr  (lambda () (append-instructions (list "PUSH" (asm-number 1) "LOAD"))))
+
 
 ; (cdr car) -> ((cons car cdr))
 (define assembly-cons (lambda ()
@@ -127,22 +128,22 @@
 			       "ALOC"                ; (cdr car &hp)
 			       "DUP"                 ; (cdr car hp hp)
 			       "ROT"                 ; (cdr hp car hp)
+			       "PUSH" (asm-number 0) ; (cdr hp car hp 0)
 			       "STOR"                ; (cdr hp) car stored
 			       "DUP"))               ; (cdr hp hp)
-			(assembly-increment)         ; (cdr hp (+ hp 1))
 			(append-instructions
-			 (list "SWAP"                ; (cdr (+ hp 1) hp)
-			       "ROT"                 ; (hp cdr (+ hp 1))
+			 (list "ROT"                 ; (hp cdr hp)
+			       "PUSH" (asm-number 1) ; (hp cdr hp 1)
 			       "STOR"))              ; (hp)  cdr stored
 			))
 
 
 ; top is the cons box to set, then the new value
 (define assembly-set-car 
-  (lambda () (append-instructions "STOR")))
+  (lambda () (append-instructions (list "PUSH" (asm-number 0) "STOR"))))
 (define assembly-set-cdr 
-  (lambda () 
-    (assembly-increment) (append-instruction "STOR")))
+  (lambda () (append-instructions (list "PUSH" (asm-number 1) "STOR"))))
+
 
 ; these define how to call the three primitives car, cdr, and cons as
 ; part of larger compiler generated sequences (e.g., function application)
@@ -179,9 +180,12 @@
 				   "SWAP"))                ; (clos env  args)
 			    (u-call-cons)	           ; (clos (args . env)*)
 			    (append-instructions
-			     (list "PUSH" env-ptr "LOAD"   ; stack is (clos (args . env)* renv)
+			     (list "PUSH" env-ptr 
+				   "PUSH" (asm-number 0)
+				   "LOAD"                  ; stack is (clos (args . env)* renv)
 				   "SWAP"                  ; stack is (clos renv (args . env)* )
 				   "PUSH" env-ptr          ; stack is (clos renv (args . env) &ep)
+				   "PUSH" (asm-number 0)   ; stack is (clos renv (args . env) &ep 0)
 				   "STOR"                  ; stack is (clos renv) new env is installed!
 				   "SWAP"))                ; stack is (renv clos) 
 			    (u-call-cdr)                   ; stack is (renv clos-code)
@@ -189,6 +193,7 @@
 			     (list "CALL"                  ; make the call.  we'll have (renv rval)
 				   "SWAP"                  ; stack is (rval renv)
 				   "PUSH" env-ptr          ; stack is (rval renv &ep)
+				   "PUSH" (asm-number 0)   ; stack is (rval renv &ep 0)
 				   "STOR"                  ; set the env pointer
 				   ))))
 
@@ -204,7 +209,8 @@
 				   "SWAP"))             ; (renv rp clos env args)
 			    (u-call-cons)               ; (renv rp clos (args . env)* )
 			    (append-instructions
-			     (list "PUSH" env-ptr       ; (renv rp clos (args . env)* ep)      
+			     (list "PUSH" env-ptr       ; (renv rp clos (args . env)* ep)  
+				   "PUSH" (asm-number 0) ; (renv rp clos (args . env)* ep 0)
 				   "STOR"               ; (renv rp clos)
 				   ))                   ; note that we didn't store the current env
 					                ; this is a tail call so we'll return straight
@@ -241,7 +247,7 @@
 
 (define assembly-env-cell
   (lambda (depth idx)
-    (append-instructions (list "PUSH" env-ptr "LOAD"))
+    (append-instructions (list "PUSH" env-ptr "PUSH" (asm-number 0) "LOAD"))
     (assembly-env-cell-helper depth idx)))
 
 (define assembly-env-val 
@@ -251,7 +257,7 @@
 
 (define assembly-nil      
   (lambda ()
-    (append-instructions (list "PUSH" "@__nil" "LOAD"))))
+    (append-instructions (list "PUSH" "@__nil" "PUSH" (asm-number 0) "LOAD"))))
 
 ; Lookup functions,  find a particular atom in the environment
 (define lookup-reference-offset 
@@ -327,7 +333,7 @@
     (let ((label (fresh-label)))
       (append-instructions
        (list "PUSH" (string-append "@" label)
-	     "PUSH" env-ptr "LOAD"))
+	     "PUSH" env-ptr "PUSH" (asm-number 0) "LOAD"))
       (u-call-cons)
       (lambda ()	
 	(append-instruction (string-append ":" label))
@@ -371,10 +377,13 @@
 	    (append-instructions 
 	     (list
 	      "PUSH" "@__top_level_env_tail" 
-	      "LOAD" "STOR"))
-	    (assembly-increment)
-	    (append-instructions
-	     (list "PUSH" "@__top_level_env_tail" "STOR"
+	      "PUSH" (asm-number 0)
+	      "LOAD" 
+	      "PUSH" (asm-number 0)
+	      "STOR"
+	      "PUSH"
+	      "@__top_level_env_tail" 
+	      "PUSH" (asm-number 1) "STOR"
 	      ))))
 	  r)))
 
@@ -465,9 +474,9 @@
     (assembly-env-cell 0 0)             ; so it is guaranteed to not be shared.
     (append-instructions                ; stack is (cdr &car)
      (list "DUP"                        ; (cdr &car &car)                       
-	   "ROT"))                      ; (&car cdr &car)
-    (assembly-increment)                ; (&car cdr &cdr)
-    (append-instruction "STOR")         ; (&car)
+	   "ROT"                        ; (&car cdr &car)
+	   "PUSH" (asm-number 1)        ; (&car cdr &car 1)
+	   "STOR"))                     ; (&car)
     (assembly-funret)					
 
     (append-instructions
@@ -566,7 +575,7 @@
       (list 
        ":__main" ; now initialize the heap pointer to point somewhere
        "PUSH" "@__initial_env"
-       "PUSH" env-ptr "STOR")) ; set the initial env pointer
+       "PUSH" env-ptr "PUSH" (asm-number 0) "STOR")) ; set the initial env pointer
      ))
 
 

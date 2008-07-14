@@ -133,11 +133,70 @@
   }							\
   }while(0);
 
-#define TYPE_ERROR(t) do{			\
-    fprintf(stderr, "Type error. Expected "#t);	\
-    DO_DUMP(stderr);				\
-    exit(-1);					\
+#define TYPE_ERROR(t) do{					\
+    fprintf(stderr, "Type error. Expected "#t"\n");		\
+    DO_DUMP(stderr);						\
+    exit(-1);							\
   }while(0);
+
+static long memory[MEM_SIZE];
+static long *sp = &memory[MEM_SIZE-1];
+static long *pc = memory;
+static long *hp;
+static long  rr = MAKE_PTR(0,0); /* the root regiseter can be used by the language
+				    to store an additional root for gc (anything 
+				    on the stack is also treated as a root). */
+
+void gc(long *new_heap)
+{
+  long *mappings[MEM_SIZE];
+  long worklist[MEM_SIZE];
+  long *work = worklist;
+  int i;
+  long tmp, work;
+  memset(mappings, 0xffffffff, MEM_SIZE);
+
+  hp = new_heap;
+  if(CELL_TYPE(rr) == PTR){
+    *work = rr;
+    work++;
+    mappings[PTR_TARGET(rr)] = hp;
+    rr = MAKE_PTR(hp - memory, PTR_SIZE(STACK(i)));
+    hp += PTR_SIZE(rr);
+  }
+
+  for(i=0;i<STACK_HEIGHT();i++){
+    if(CELL_TYPE(STACK(i)) == PTR){
+      *work = STACK(i);
+      work++;
+      mappings[PTR_TARGET(STACK(i))] = hp;
+      STACK(i) = MAKE_PTR(hp - memory, PTR_SIZE(STACK(i)));
+      hp += PTR_SIZE(STACK(i));
+
+    }
+  }
+
+  while(work > worklist){
+    work--;
+    tmp = *work;
+    for(i=0;i<PTR_SIZE(tmp);i++){
+      val = memory[PTR_TARGET(tmp)+i];
+      if(CELL_TYPE(val) == PTR){
+	if(mappings[PTR_TARGET(val)] = 0xffffffff){
+	  *(mappings[PTR_TARGET(tmp)] + i) = val;
+	  mappings[PTR_TARGET(val)] = hp;
+	  hp += PTR_SIZE(val);
+	  *work = val;
+	  work++;
+	}else{
+	  *(mappings[PTR_TARGET(tmp)] + i) = MAKE_PTR(mappings[PTR_TARGET(val)] - memory, PTR_SIZE(val));
+	}
+      }else{
+	*(mappings[PTR_TARGET(tmp)] + i) = val;
+      }
+    }
+  }
+}
 
 int main(int argc, char *argv[])
 {
@@ -165,17 +224,11 @@ int main(int argc, char *argv[])
   };
 
   int fd;
-  long memory1[MEM_SIZE], memory2[MEM_SIZE], *memory = memory1;
-  long *sp = &memory[MEM_SIZE-1];
-  long *pc = memory;
-  long *hp;
-  long  rr = MAKE_PTR(0,0); /* the root regiseter can be used by the language
-			       to store an additional root for gc (anything 
-			       on the stack is also treated as a root). */
+
   long nread;  
   fd    = argc > 1 ? open(argv[1], O_RDONLY) : STDIN_FILENO;
   nread = read(fd, memory, MEM_SIZE*sizeof(long))/sizeof(long);  
-
+  hp = memory + nread;
   /* sweep through the program image converting
      everything to host byte order */
   for(; nread > 0 ; nread--){
@@ -239,33 +292,9 @@ int main(int argc, char *argv[])
   /* arithmetic */
   INSTRUCTION(PLUS,
 	      ASSERT_TYPE(STACK(0), NUM);
-	      switch(CELL_TYPE(STACK(1))){
-		case VCONST:
-		case LCONST:
-		case NUM:
-		  STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) +  NUM_TO_NATIVE(STACK(0)), CELL_TYPE(STACK(1)));
-		  break;
-		case PTR:
-		  if(NUM_TO_NATIVE(STACK(0)) < 0){
-		    fprintf(stderr, "Invalid pointer arithmetic: negative offset %d is unallowed\n",
-			    NUM_TO_NATIVE(STACK(0)));
-		    DO_DUMP(stderr);
-		    exit(1);
-		  }
-		  if(PTR_SIZE(STACK(1)) > NUM_TO_NATIVE(STACK(0)) || 
-		     PTR_SIZE(STACK(1) == 0xff)){
-		    STACK(1) = MAKE_PTR(PTR_TARGET(STACK(1)) + NUM_TO_NATIVE(STACK(0)),
-					(PTR_SIZE(STACK(1)) == 0xff ? 
-					 0xff : PTR_SIZE(STACK(1)) - NUM_TO_NATIVE(STACK(0))));
-		  }else{
-		    fprintf(stderr, "Invalid pointer arithmetic: offset %d is greater than size %d\n",
-			    NUM_TO_NATIVE(STACK(0)), PTR_SIZE(STACK(1)));
-		    DO_DUMP(stderr);
-		    exit(1);
-		  }
-		  break;
-		}
-		STACK_POP();
+	      ASSERT_TYPE(STACK(1), NUM);
+	      STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) +  NUM_TO_NATIVE(STACK(0)), CELL_TYPE(STACK(1)));
+	      STACK_POP();
 	      );
     
   INSTRUCTION(MUL, do{
@@ -300,8 +329,14 @@ int main(int argc, char *argv[])
   
   /* memory access */
   INSTRUCTION(STOR, do{
-      ASSERT_TYPE(STACK(0), PTR);
-      memory[PTR_TARGET(STACK(0))] = STACK(1);
+      ASSERT_TYPE(STACK(0), NUM)
+      ASSERT_TYPE(STACK(1), PTR);
+      if(NUM_TO_NATIVE(STACK(0)) < 0 || NUM_TO_NATIVE(STACK(0)) > PTR_SIZE(STACK(1))){
+	fprintf(stderr, "Invalid store: offset %d out of bounds\n", NUM_TO_NATIVE(STACK(0)));
+	exit(1);
+      }
+      memory[PTR_TARGET(STACK(1)) + NUM_TO_NATIVE(STACK(0))] = STACK(2);
+      STACK_POP();
       STACK_POP();
       STACK_POP();
     }while(0)
@@ -316,8 +351,17 @@ int main(int argc, char *argv[])
       STACK(0) = __tmp;
     }while(0));
 
-  INSTRUCTION(LOAD, ASSERT_TYPE(STACK(0), PTR); STACK(0) = memory[PTR_TARGET(STACK(0))]);
-
+  INSTRUCTION(LOAD, do{
+      ASSERT_TYPE(STACK(0), NUM);
+      ASSERT_TYPE(STACK(1), PTR);
+      if(NUM_TO_NATIVE(STACK(0)) < 0 || NUM_TO_NATIVE(STACK(0)) > PTR_SIZE(STACK(1))){
+	fprintf(stderr, "Invalid load: offset %d out of bounds\n", NUM_TO_NATIVE(STACK(0)));
+	exit(1);
+      }
+      STACK(1) = memory[PTR_TARGET(STACK(1)) + NUM_TO_NATIVE(STACK(0))];
+      STACK_POP();
+    }while(0));
+  
   /* I/O */
   INSTRUCTION(GETC, STACK_PUSH(MAKE_CHAR(getchar())));
   INSTRUCTION(DUMP, DO_DUMP(stdout));
