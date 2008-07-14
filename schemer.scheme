@@ -63,7 +63,6 @@
 ; these are runtime constants used for tracking
 ; the heap and the environment
 
-(define env-ptr  (asm-pointer 1025 1))
 (define top-level-env '(("=" "cons" "car" "cdr" "+" "-" "*")))
 
 ; this is the compiler internal notion of what instruction
@@ -180,21 +179,15 @@
 				   "SWAP"))                ; (clos env  args)
 			    (u-call-cons)	           ; (clos (args . env)*)
 			    (append-instructions
-			     (list "PUSH" env-ptr 
-				   "PUSH" (asm-number 0)
-				   "LOAD"                  ; stack is (clos (args . env)* renv)
-				   "SWAP"                  ; stack is (clos renv (args . env)* )
-				   "PUSH" env-ptr          ; stack is (clos renv (args . env) &ep)
-				   "PUSH" (asm-number 0)   ; stack is (clos renv (args . env) &ep 0)
-				   "STOR"                  ; stack is (clos renv) new env is installed!
+			     (list "RDRR"                  ; stack is (clos (args . env) renv)
+				   "SWAP"                  ; stack is (clos renv (args . env) )
+				   "WTRR"                  ; stack is (clos renv) rr = (args . env)
 				   "SWAP"))                ; stack is (renv clos) 
 			    (u-call-cdr)                   ; stack is (renv clos-code)
 			    (append-instructions
 			     (list "CALL"                  ; make the call.  we'll have (renv rval)
 				   "SWAP"                  ; stack is (rval renv)
-				   "PUSH" env-ptr          ; stack is (rval renv &ep)
-				   "PUSH" (asm-number 0)   ; stack is (rval renv &ep 0)
-				   "STOR"                  ; set the env pointer
+				   "WTRR"                  ; stack is (rval) rr = renv
 				   ))))
 
 ; tail calls are sneakier we avoid saving the current
@@ -208,11 +201,8 @@
 				   "ROT"                ; (renv rp clos args env)
 				   "SWAP"))             ; (renv rp clos env args)
 			    (u-call-cons)               ; (renv rp clos (args . env)* )
-			    (append-instructions
-			     (list "PUSH" env-ptr       ; (renv rp clos (args . env)* ep)  
-				   "PUSH" (asm-number 0) ; (renv rp clos (args . env)* ep 0)
-				   "STOR"               ; (renv rp clos)
-				   ))                   ; note that we didn't store the current env
+			    (append-instruction "WTRR") ; (renv rp clos) rr = (args . env)
+					                ; note that we didn't store the current env
 					                ; this is a tail call so we'll return straight
 			                                ; to the current renv/rp!
 			    (u-call-cdr)                ; (renv rp code)
@@ -247,7 +237,7 @@
 
 (define assembly-env-cell
   (lambda (depth idx)
-    (append-instructions (list "PUSH" env-ptr "PUSH" (asm-number 0) "LOAD"))
+    (append-instruction "RDRR")
     (assembly-env-cell-helper depth idx)))
 
 (define assembly-env-val 
@@ -332,8 +322,7 @@
   (lambda (l env rest)
     (let ((label (fresh-label)))
       (append-instructions
-       (list "PUSH" (string-append "@" label)
-	     "PUSH" env-ptr "PUSH" (asm-number 0) "LOAD"))
+       (list "PUSH" (string-append "@" label) "RDRR"))
       (u-call-cons)
       (lambda ()	
 	(append-instruction (string-append ":" label))
@@ -575,7 +564,7 @@
       (list 
        ":__main" ; now initialize the heap pointer to point somewhere
        "PUSH" "@__initial_env"
-       "PUSH" env-ptr "PUSH" (asm-number 0) "STOR")) ; set the initial env pointer
+       "WTRR")) ; set the initial env pointer
      ))
 
 

@@ -1,4 +1,5 @@
-#define MEM_SIZE 4096
+#define MEM_SIZE   4096
+#define STACK_SIZE 256
 
 #define INS(i) (i)
 
@@ -35,4 +36,8 @@
 #define I_DUMP  INS(20)
 #define I_PINT  INS(21)
 #define I_PCHR  INS(22)
+
+/* Root register manipulation */
+#define I_RDRR  INS(23)
+#define I_WTRR  INS(24)
 /* End instructions */

@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include "interpreter.h"
-
+#include <string.h>
 /* Internal macros */
 #ifdef __GUARD_STACK__
 #define STACK(x) ({					\
@@ -103,7 +103,7 @@
 #define unlikely(x)     __builtin_expect((x),0)
 #define likely(x)     __builtin_expect((x),1)
 
-#define MAKE_PTR(x,sz) ( (x) << 10 | ((sz)  & 0xff) << 2 | PTR)
+#define MAKE_PTR(x,sz) ( ((x) << 10) | (((sz)  & 0xff) << 2) | PTR)
 #define PTR_TARGET(x) (((unsigned long)x) >> 10)
 #define PTR_SIZE(x)   ((((unsigned long)x) >> 2) & 0xff)
 
@@ -125,12 +125,17 @@
 #define ASSERT_TYPE(x,t)     if(unlikely(CELL_TYPE(x) != t)){TYPE_ERROR(t);}
 #define ASSERT_NOT_TYPE(x,t) if(unlikely(CELL_TYPE(x) == t)){TYPE_ERROR(!t);}
 
-#define HEAP_CHECK(n) do{				\
-  long __tmp = n;					\
-  if(hp + __tmp > sp){					\
-    fprintf(stderr, "Unable to allocate memory!\n");	\
-    exit(-ENOMEM);					\
-  }							\
+#define HEAP_CHECK(n) do{					\
+    long __tmp = n;						\
+    if(hp + __tmp >= heap_base + heap_size){			\
+      heap_base = (heap_base == prog_end ?			\
+		   upper_heap : prog_end);			\
+      gc(heap_base);						\
+      if(hp + __tmp >= heap_base + heap_size){			\
+	fprintf(stderr, "Unable to allocate memory!\n");	\
+	exit(-ENOMEM);						\
+      }								\
+    }								\
   }while(0);
 
 #define TYPE_ERROR(t) do{					\
@@ -139,13 +144,30 @@
     exit(-1);							\
   }while(0);
 
-static long memory[MEM_SIZE];
-static long *sp = &memory[MEM_SIZE-1];
-static long *pc = memory;
-static long *hp;
-static long  rr = MAKE_PTR(0,0); /* the root regiseter can be used by the language
-				    to store an additional root for gc (anything 
-				    on the stack is also treated as a root). */
+static long memory[MEM_SIZE];          /* all of memory */
+static long *sp = &memory[MEM_SIZE-1]; /* the stack grows down from the top 
+					  (sp < &memory[MEM_SIZE] && 
+					  sp > memory[MEM_SIZE-STACK_SIZE])
+					*/
+static long *prog_end;                 /* pointer to the end of the loaded program text */
+static long *pc = memory;              /* the program counter */
+static long heap_size;                 /* maximum size of a heap (computed based on prog_end) */
+static long *upper_heap;               /* upper_heap == prog_end + heap_size; */
+static long *heap_base;                /* pointer to the first cell of the heap, 
+					  At all times
+					  (heap_base == prog_end || heap_base == upper_heap) 
+				       */
+static long *hp;                       /* the heap pointer, 
+					  At all times 
+				          (heap_base <= hp && hp < heap_base + heap_size)
+				       */
+static long  rr = MAKE_NUM(0);         /* the root regiseter can be used by the language
+					  to store an additional root for gc (anything 
+					  on the stack is also treated as a root). */
+
+#ifdef __STATS__
+static long max_alloc = 0;
+#endif
 
 void gc(long *new_heap)
 {
@@ -153,49 +175,162 @@ void gc(long *new_heap)
   long worklist[MEM_SIZE];
   long *work = worklist;
   int i;
-  long tmp, work;
-  memset(mappings, 0xffffffff, MEM_SIZE);
+  long tmp, val;
+  memset(mappings, 0xffffffff, MEM_SIZE*sizeof(long));
 
   hp = new_heap;
+
+#ifdef __GC_DEBUG__
+  fprintf(stderr, 
+	  "Entering gc with new_heap = %d\n",
+	  new_heap - memory);
+#endif
+  /* here's the deal,
+     worklist is a stack of tree branches we need
+     to walk
+     mappings is a map from the old ptr target (offset in 
+         the memory array) to the native address of the 
+	 heap cell to which the data must be copied.
+
+     The way this works is whenever we encounter a pointer
+     we check two things:
+        - is it's entry in the mappings array equal to 
+	  0xffffffff, if so then we have not yet allocated
+	  space for it in the new heap.
+
+	- is the target of the pointer inside the original
+	  program code? if so, we do not copy it. Instead
+	  we just set the entry in mappings to point to the
+	  original target.  However, we must still add this 
+	  cell to the worklist so that we walk its children.
+
+     If a cell must be copied we first set up its reverse
+     mapping based on the current heap pointer, increment
+     the heap pointer by the size of the pointer target, 
+     then add the original pointer to the worklist.  
+
+     We initialize the worklist by looking at the root
+     register and the stack.  
+
+     We are finished when the worklist is empty.
+  */
   if(CELL_TYPE(rr) == PTR){
     *work = rr;
     work++;
-    mappings[PTR_TARGET(rr)] = hp;
-    rr = MAKE_PTR(hp - memory, PTR_SIZE(STACK(i)));
-    hp += PTR_SIZE(rr);
-  }
-
-  for(i=0;i<STACK_HEIGHT();i++){
-    if(CELL_TYPE(STACK(i)) == PTR){
-      *work = STACK(i);
-      work++;
-      mappings[PTR_TARGET(STACK(i))] = hp;
-      STACK(i) = MAKE_PTR(hp - memory, PTR_SIZE(STACK(i)));
-      hp += PTR_SIZE(STACK(i));
-
+    if(&memory[PTR_TARGET(rr)] >= prog_end){
+      mappings[PTR_TARGET(rr)] = hp;
+      rr = MAKE_PTR(hp - memory, PTR_SIZE(rr));
+      hp += PTR_SIZE(rr);
+    }else{
+      mappings[PTR_TARGET(rr)] = memory + PTR_TARGET(rr);
     }
   }
 
+  for(i=0;i<STACK_HEIGHT();i++){
+    if(CELL_TYPE(STACK(i)) == PTR && 
+       mappings[PTR_TARGET(STACK(i))] == (long *)0xffffffff){
+      *work = STACK(i);
+      work++;
+      if(&memory[PTR_TARGET(STACK(i))] >= prog_end){
+	mappings[PTR_TARGET(STACK(i))] = hp;
+	STACK(i) = MAKE_PTR(hp - memory, PTR_SIZE(STACK(i)));
+	hp += PTR_SIZE(STACK(i));
+      }else{
+	mappings[PTR_TARGET(STACK(i))] = memory + PTR_TARGET(STACK(i));
+      }
+    }
+  }
+
+  /*
+    ok, the work list has been initialized, we now walk 
+    down the list copying the contents of each targeted 
+    cell as we go.  If we find a pointer, we perform the
+    operations described above (allocation in new heap, 
+    initializing the mapping, and adding to the worklist)
+    then write the new pointer-value into the target cell.
+  */
   while(work > worklist){
     work--;
     tmp = *work;
+
+    if(PTR_SIZE(tmp) == 0xff) continue;
+
     for(i=0;i<PTR_SIZE(tmp);i++){
       val = memory[PTR_TARGET(tmp)+i];
       if(CELL_TYPE(val) == PTR){
-	if(mappings[PTR_TARGET(val)] = 0xffffffff){
-	  *(mappings[PTR_TARGET(tmp)] + i) = val;
-	  mappings[PTR_TARGET(val)] = hp;
-	  hp += PTR_SIZE(val);
+	if(mappings[PTR_TARGET(val)] == (long *)0xffffffff){
+	  /* the cell is a pointer we have not yet 
+	     created a mapping for.  That means we 
+	     must add it to the work list, and if it
+	     is above the program text, allocate space
+	     in the new heap */
 	  *work = val;
 	  work++;
+	  if(&memory[PTR_TARGET(val)] >= prog_end){
+#ifdef __GC_DEBUG__
+	    fprintf(stderr, 
+		    "While copying ptr: %d -> %d (sz: %d) offset %d is a fresh pointer.\n"
+		    "\tOriginal: %d sz: %d\n"
+		    "\tFresh:    %d\n",
+		    PTR_TARGET(tmp),
+		    mappings[PTR_TARGET(tmp)] - memory,
+		    PTR_SIZE(tmp),
+		    i,
+		    PTR_TARGET(val), PTR_SIZE(val),
+		    hp - memory);
+#endif
+	    /* set the value of the cell we're copying to be the new pointer */
+	    *(mappings[PTR_TARGET(tmp)] + i) = MAKE_PTR(hp - memory, PTR_SIZE(val));
+	    /* install the reverse map */
+	    mappings[PTR_TARGET(val)] = hp;
+	    /* update the heap pointer */
+	    hp += PTR_SIZE(val);
+	  }else{
+#ifdef __GC_DEBUG__
+	    fprintf(stderr, 
+		    "While copying ptr: %d -> %d (sz: %d) offset %d is inside prog txt.\n"
+		    "\tOriginal: %d sz: %d\n",
+		    PTR_TARGET(tmp),
+		    mappings[PTR_TARGET(tmp)] - memory,
+		    PTR_SIZE(tmp),
+		    i,
+		    PTR_TARGET(val), PTR_SIZE(val));
+#endif
+	    /* the target of this pointer is in the program text */
+	    /* just perform a straight copy and set the value for this */	       
+	    /* cell in the mappings to the identity map */
+	    *(mappings[PTR_TARGET(tmp)] + i) = val;
+	    mappings[PTR_TARGET(val)] = &memory[PTR_TARGET(val)];
+	  }
 	}else{
-	  *(mappings[PTR_TARGET(tmp)] + i) = MAKE_PTR(mappings[PTR_TARGET(val)] - memory, PTR_SIZE(val));
+#ifdef __GC_DEBUG__
+	  fprintf(stderr,
+		  "While copying ptr: %d -> %d (sz: %d) offset %d is a familiar pointer.\n"
+		  "\tOriginal: %d sz: %d\n"
+		  "\tMapping:  %d\n",
+		  PTR_TARGET(tmp),
+		  mappings[PTR_TARGET(tmp)] - memory,
+		  PTR_SIZE(tmp),
+		  i,
+		  PTR_TARGET(val), PTR_SIZE(val),
+		  mappings[PTR_TARGET(val)] - memory);
+#endif
+	  /* this is a pointer, but we've seen it already.
+	     we create a new pointer cell based on the value in the
+	     mappings[] array */
+	  *(mappings[PTR_TARGET(tmp)] + i) = MAKE_PTR(mappings[PTR_TARGET(val)] - memory, 
+						      PTR_SIZE(val));
 	}
       }else{
+	/* the cell isn't a pointer, we can just copy it */
 	*(mappings[PTR_TARGET(tmp)] + i) = val;
       }
     }
   }
+#ifdef __GC_DEBUG__
+  fprintf(stderr, "After gc %d cells available\n",
+	  heap_size - (hp - heap_base));
+#endif
 }
 
 int main(int argc, char *argv[])
@@ -220,15 +355,20 @@ int main(int argc, char *argv[])
     
     /* I/0 */
     (long)&&GETC, (long)&&DUMP, 
-    (long)&&PINT, (long)&&PCHR, 
+    (long)&&PINT, (long)&&PCHR,
+
+    /* Root Register manipulation */
+    (long)&&RDRR, (long)&&WTRR
   };
 
   int fd;
-
   long nread;  
-  fd    = argc > 1 ? open(argv[1], O_RDONLY) : STDIN_FILENO;
-  nread = read(fd, memory, MEM_SIZE*sizeof(long))/sizeof(long);  
-  hp = memory + nread;
+  fd         = argc > 1 ? open(argv[1], O_RDONLY) : STDIN_FILENO;
+  nread      = read(fd, memory, MEM_SIZE*sizeof(long))/sizeof(long);  
+  prog_end   = heap_base = hp = memory + nread;
+  heap_size  = (MEM_SIZE - STACK_SIZE - nread)/2;
+  upper_heap = hp + heap_size;
+
   /* sweep through the program image converting
      everything to host byte order */
   for(; nread > 0 ; nread--){
@@ -287,7 +427,11 @@ int main(int argc, char *argv[])
 		STACK_POP();
 	      }while(0)
 	      );
-  INSTRUCTION(END, return 0);
+  INSTRUCTION(END, 
+#ifdef __STATS__
+	      fprintf(stderr, "max_alloc = %d\n", max_alloc);
+#endif
+	      return 0);
 
   /* arithmetic */
   INSTRUCTION(PLUS,
@@ -346,9 +490,14 @@ int main(int argc, char *argv[])
       long __tmp;
       ASSERT_TYPE(STACK(0), NUM);
       HEAP_CHECK(NUM_TO_NATIVE(STACK(0)));
-      __tmp = MAKE_PTR(hp - memory, STACK(0));
+      __tmp = MAKE_PTR(hp - memory, NUM_TO_NATIVE(STACK(0)));
       hp += NUM_TO_NATIVE(STACK(0));
       STACK(0) = __tmp;
+#ifdef __STATS__
+      if(hp - heap_base > max_alloc){
+	max_alloc = hp - heap_base;
+      }
+#endif
     }while(0));
 
   INSTRUCTION(LOAD, do{
@@ -367,6 +516,10 @@ int main(int argc, char *argv[])
   INSTRUCTION(DUMP, DO_DUMP(stdout));
   INSTRUCTION(PINT, ASSERT_TYPE(STACK(0), NUM);    printf("%ld\n", NUM_TO_NATIVE(STACK(0))); STACK_POP());
   INSTRUCTION(PCHR, ASSERT_TYPE(STACK(0), VCONST); putchar(CHAR_TO_NATIVE(STACK_POP())));
+
+  INSTRUCTION(RDRR, STACK_PUSH(rr));
+  INSTRUCTION(WTRR, rr = STACK_POP());
+
   return 0;
 }
   

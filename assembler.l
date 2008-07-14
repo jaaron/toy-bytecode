@@ -80,6 +80,8 @@ GETC  {out_buffer[words++] = PACK_VM_CONST(I_GETC);}
 DUMP  {out_buffer[words++] = PACK_VM_CONST(I_DUMP);}
 PINT  {out_buffer[words++] = PACK_VM_CONST(I_PINT);}
 PCHR  {out_buffer[words++] = PACK_VM_CONST(I_PCHR);}
+RDRR  {out_buffer[words++] = PACK_VM_CONST(I_RDRR);}
+WTRR  {out_buffer[words++] = PACK_VM_CONST(I_WTRR);}
 
 :{IDENT} {
   int i;
@@ -117,7 +119,6 @@ PCHR  {out_buffer[words++] = PACK_VM_CONST(I_PCHR);}
 
 [[:space:]]*   {}
 <<EOF>>        { yyterminate(); }
-
 .              { fprintf(stderr, "Error: unexpected token: %s after %d words\n", yytext, words); exit(1);}
 
 %%
@@ -153,5 +154,3 @@ int main(int argc, char *argv[])
   close(output_filedes);
   return 0;
 }
-
-
