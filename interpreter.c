@@ -219,9 +219,17 @@ void gc(long *new_heap)
     *work = rr;
     work++;
     if(&memory[PTR_TARGET(rr)] >= prog_end){
+#ifdef __GC_DEBUG__
+      fprintf(stderr, "Copying target of root register %d -> %d (sz: %d)\n",
+	      PTR_TARGET(rr), hp - memory, PTR_SIZE(rr));
+#endif
       rr = mappings[PTR_TARGET(rr)] = MAKE_PTR(hp-memory, PTR_SIZE(rr));
       hp += PTR_SIZE(rr);
     }else{
+#ifdef __GC_DEBUG__
+      fprintf(stderr, "Root register has target in prog_text: %d (sz: %d)\n",
+	      PTR_TARGET(rr), PTR_SIZE(rr));
+#endif
       mappings[PTR_TARGET(rr)] = rr;
     }
   }
@@ -231,9 +239,17 @@ void gc(long *new_heap)
       *work = STACK(i);
       work++;
       if(&memory[PTR_TARGET(STACK(i))] >= prog_end){
+#ifdef __GC_DEBUG__
+	fprintf(stderr, "Copying pointer in cell STACK(%d) from %d -> %d (sz: %d)\n",
+		i, PTR_TARGET(STACK(i)), hp - memory, PTR_SIZE(STACK(i)));
+#endif
 	STACK(i) = mappings[PTR_TARGET(STACK(i))] = MAKE_PTR(hp-memory, PTR_SIZE(STACK(i)));
 	hp += PTR_SIZE(STACK(i));
       }else{
+#ifdef __GC_DEBUG__
+	fprintf(stderr, "Cell STACK(%d) has target in prog_text: %d (sz: %d)\n",
+		i, PTR_TARGET(STACK(i)), PTR_SIZE(STACK(i)));
+#endif
 	mappings[PTR_TARGET(STACK(i))] = STACK(i);
       }
     }else{
@@ -326,6 +342,10 @@ void gc(long *new_heap)
 
   for(i=0;i<prog_end-memory;i++){
     if(CELL_TYPE(memory[i]) == PTR && mappings[PTR_TARGET(memory[i])] != 0xffffffff){
+#ifdef __GC_DEBUG__
+      fprintf(stderr, "Found stale pointer in program text: %d updating to %d\n",
+	      PTR_TARGET(memory[i]), mappings[PTR_TARGET(memory[i])]);
+#endif
       memory[i] = mappings[PTR_TARGET(memory[i])];
     }
   }
