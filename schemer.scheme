@@ -544,19 +544,17 @@
       ; 3 at the moment so 0x10000003 is @__nil & ptr-flag).
       ; note that these will all break if the object representation
       ; changes.
-      ":__nil"
-      (asm-pointer 3 2) (asm-pointer 3 2)
-      "@multiply"  (asm-pointer 3 2)
-      "@subtract"  (asm-pointer 5 2)
-      "@add"       (asm-pointer 7 2)
-      "@cdr"       (asm-pointer 9 2)
-      "@car"       (asm-pointer 11 2)
-      "@cons"      (asm-pointer 13 2)
-      "@equal"     (asm-pointer 15 2)
-      ":__initial_env"
-      (asm-pointer 17 2) (asm-pointer 3 2)
-      ":__top_level_env_tail"
-      (asm-pointer 5 2)
+      ":__nil,2"          "@__nil"       "@__nil"
+      ":__multiply_box,2" "@multiply"    "@__nil"
+      ":__subtract_box,2" "@subtract"    "@__multiply_box"
+      ":__add_box,2"      "@add"         "@__subtract_box"
+      ":__cdr_box,2"      "@cdr"         "@__add_box"
+      ":__car_box,2"      "@car"         "@__cdr_box"
+      ":__cons_box,2"     "@cons"        "@__car_box"
+      ":__equal_box,2"    "@equal"       "@__cons_box"
+      ":__initial_env,2"  "@__equal_box" "@__nil"
+
+      ":__top_level_env_tail,1" "@__multiply_box"
       ))
      (define-builtin-functions)
      (append-instructions 

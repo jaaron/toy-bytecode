@@ -83,16 +83,38 @@ PCHR  {out_buffer[words++] = PACK_VM_CONST(I_PCHR);}
 RDRR  {out_buffer[words++] = PACK_VM_CONST(I_RDRR);}
 WTRR  {out_buffer[words++] = PACK_VM_CONST(I_WTRR);}
 
-:{IDENT} {
+:{IDENT},{D_NUM} {
   int i;
-  labels[nr_labels].txt = strdup(yytext+1);
-  labels[nr_labels].dst = words;
-  fprintf(stderr, "label %s at offset %d\n", yytext+1, words);
+  char *comma           = strchr(yytext,',');
+  unsigned long sz      = atoi(comma+1);
+  labels[nr_labels].txt = malloc(sizeof(char)*(comma - yytext));
+  memcpy(labels[nr_labels].txt, yytext+1, comma - yytext - 1);
+  labels[nr_labels].txt[comma - yytext-1] = '\0';
+  labels[nr_labels].dst = PACK_PTR(words, sz);
+  fprintf(stderr, "label %s at offset %d size: %d\n", yytext+1, words, sz);
 
   for(i=0;i<nr_unresolved;i++){
     if(unresolved_labels[i].txt &&
        !strcmp(labels[nr_labels].txt, unresolved_labels[i].txt+1)){
-      out_buffer[unresolved_labels[i].dst] = PACK_PTR(words,0xff);
+      out_buffer[unresolved_labels[i].dst] = labels[nr_labels].dst;
+      free(unresolved_labels[i].txt);
+      unresolved_labels[i].txt = NULL;
+    }
+  }
+
+  nr_labels++;
+ }
+
+:{IDENT} {
+  int i;
+  labels[nr_labels].txt = strdup(yytext+1);
+  labels[nr_labels].dst = PACK_PTR(words,0xff);
+  fprintf(stderr, "label %s at offset %d unknown size\n", yytext+1, words);
+
+  for(i=0;i<nr_unresolved;i++){
+    if(unresolved_labels[i].txt &&
+       !strcmp(labels[nr_labels].txt, unresolved_labels[i].txt+1)){
+      out_buffer[unresolved_labels[i].dst] = labels[nr_labels].dst;
       free(unresolved_labels[i].txt);
       unresolved_labels[i].txt = NULL;
     }
@@ -107,7 +129,7 @@ WTRR  {out_buffer[words++] = PACK_VM_CONST(I_WTRR);}
     i++;
   }
   if(i < nr_labels){
-    out_buffer[words] = PACK_PTR(labels[i].dst,0xff);
+    out_buffer[words] = labels[i].dst;
   }else{
     unresolved_labels[nr_unresolved].txt = strdup(yytext);
     unresolved_labels[nr_unresolved].dst = words;

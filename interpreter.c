@@ -44,28 +44,28 @@
 
 #define MEM_SIZE 4096
 
-#define DO_DUMP(stream) do{					\
-    int q=0;							\
-    fprintf(stream, "pc: %d, sp: %p height: %d\nstack:\n",	\
-	    pc-memory, sp, STACK_HEIGHT());			\
-    while(q < STACK_HEIGHT() ){					\
-      switch(CELL_TYPE(STACK(q))){				\
-      case NUM:							\
-	fprintf(stream, "\t%d\n", NUM_TO_NATIVE(STACK(q)));	\
-	break;							\
-      case VCONST:						\
-	fprintf(stream, "\tvc: %d\n", NUM_TO_NATIVE(STACK(q)));	\
-	break;							\
-      case LCONST:						\
-	fprintf(stream, "\tlc: %d\n", NUM_TO_NATIVE(STACK(q)));	\
-	break;							\
-      case PTR:							\
-	fprintf(stream, "\tptr: %d sz: %d\n",			\
-		PTR_TARGET(STACK(q)), PTR_SIZE(STACK(q)));	\
-	break;							\
-      }								\
-      q++;							\
-    }								\
+#define DO_DUMP(stream) do{						\
+    int q=0;								\
+    fprintf(stream, "pc: %d, hp: %d sp: %p height: %d\nstack:\n",	\
+	    pc-memory, hp-memory, sp, STACK_HEIGHT());			\
+    while(q < STACK_HEIGHT() ){						\
+      switch(CELL_TYPE(STACK(q))){					\
+      case NUM:								\
+	fprintf(stream, "\t%d\n", NUM_TO_NATIVE(STACK(q)));		\
+	break;								\
+      case VCONST:							\
+	fprintf(stream, "\tvc: %d\n", NUM_TO_NATIVE(STACK(q)));		\
+	break;								\
+      case LCONST:							\
+	fprintf(stream, "\tlc: %d\n", NUM_TO_NATIVE(STACK(q)));		\
+	break;								\
+      case PTR:								\
+	fprintf(stream, "\tptr: %d sz: %d\n",				\
+		PTR_TARGET(STACK(q)), PTR_SIZE(STACK(q)));		\
+	break;								\
+      }									\
+      q++;								\
+    }									\
   }while(0)
 
 #define IDX_FROM_INS(i) (i >> 2)
