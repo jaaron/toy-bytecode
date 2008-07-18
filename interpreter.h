@@ -1,6 +1,11 @@
 #define MEM_SIZE   4096
 #define STACK_SIZE 256
 
+#define NUM    0x0
+#define LCONST 0x1
+#define VCONST 0x2
+#define PTR    0x3
+
 #define INS(i) (i)
 
 /* Byte code instructions */

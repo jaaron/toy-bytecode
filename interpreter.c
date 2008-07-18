@@ -168,7 +168,6 @@ static long  rr = MAKE_NUM(0);         /* the root regiseter can be used by the 
 #ifdef __STATS__
 static long max_alloc = 0;
 #endif
-#define __GC_DEBUG__
 
 void gc(long *new_heap)
 {
@@ -235,25 +234,27 @@ void gc(long *new_heap)
   }
 
   for(i=0;i<STACK_HEIGHT();i++){
-    if(CELL_TYPE(STACK(i)) == PTR && mappings[PTR_TARGET(STACK(i))] == 0xffffffff){
-      *work = STACK(i);
-      work++;
-      if(&memory[PTR_TARGET(STACK(i))] >= prog_end){
+    if(CELL_TYPE(STACK(i)) == PTR){
+      if(mappings[PTR_TARGET(STACK(i))] == 0xffffffff){
+	*work = STACK(i);
+	work++;
+	if(&memory[PTR_TARGET(STACK(i))] >= prog_end){
 #ifdef __GC_DEBUG__
-	fprintf(stderr, "Copying pointer in cell STACK(%d) from %d -> %d (sz: %d)\n",
-		i, PTR_TARGET(STACK(i)), hp - memory, PTR_SIZE(STACK(i)));
+	  fprintf(stderr, "Copying pointer in cell STACK(%d) from %d -> %d (sz: %d)\n",
+		  i, PTR_TARGET(STACK(i)), hp - memory, PTR_SIZE(STACK(i)));
 #endif
-	STACK(i) = mappings[PTR_TARGET(STACK(i))] = MAKE_PTR(hp-memory, PTR_SIZE(STACK(i)));
-	hp += PTR_SIZE(STACK(i));
+	  STACK(i) = mappings[PTR_TARGET(STACK(i))] = MAKE_PTR(hp-memory, PTR_SIZE(STACK(i)));
+	  hp += PTR_SIZE(STACK(i));
+	}else{
+#ifdef __GC_DEBUG__
+	  fprintf(stderr, "Cell STACK(%d) has target in prog_text: %d (sz: %d)\n",
+		  i, PTR_TARGET(STACK(i)), PTR_SIZE(STACK(i)));
+#endif
+	  mappings[PTR_TARGET(STACK(i))] = STACK(i);
+	}
       }else{
-#ifdef __GC_DEBUG__
-	fprintf(stderr, "Cell STACK(%d) has target in prog_text: %d (sz: %d)\n",
-		i, PTR_TARGET(STACK(i)), PTR_SIZE(STACK(i)));
-#endif
-	mappings[PTR_TARGET(STACK(i))] = STACK(i);
+	STACK(i) = mappings[PTR_TARGET(STACK(i))];
       }
-    }else{
-      STACK(i) = mappings[PTR_TARGET(STACK(i))];
     }
   }
 
@@ -343,8 +344,11 @@ void gc(long *new_heap)
   for(i=0;i<prog_end-memory;i++){
     if(CELL_TYPE(memory[i]) == PTR && mappings[PTR_TARGET(memory[i])] != 0xffffffff){
 #ifdef __GC_DEBUG__
-      fprintf(stderr, "Found stale pointer in program text: %d updating to %d\n",
-	      PTR_TARGET(memory[i]), mappings[PTR_TARGET(memory[i])]);
+      if(mappings[PTR_TARGET(memory[i])] != memory[i]){
+	fprintf(stderr, "Found stale pointer in program text at offset %d: %d updating to %d (sz: %d)\n",
+		i, PTR_TARGET(memory[i]), PTR_TARGET(mappings[PTR_TARGET(memory[i])]), 
+		PTR_SIZE(mappings[PTR_TARGET(memory[i])]));
+      }
 #endif
       memory[i] = mappings[PTR_TARGET(memory[i])];
     }
@@ -354,8 +358,8 @@ void gc(long *new_heap)
 
 
 #ifdef __GC_DEBUG__
-  fprintf(stderr, "After gc %d cells available\n",
-	  heap_size - (hp - heap_base));
+  fprintf(stderr, "After gc %d cells available (hp = %d)\n",
+	  heap_size - (hp - heap_base), hp - memory);
 #endif
 
 }

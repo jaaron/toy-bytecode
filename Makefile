@@ -1,5 +1,5 @@
-CFLAGS=-g
-# CFLAGS=-O3
+# CFLAGS=-g
+CFLAGS=-O3
 
 all : interpreter trace-interpreter assembler
 

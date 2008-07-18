@@ -4,10 +4,11 @@
 #include <stdio.h>
 #include "interpreter.h"
 
-#define PACK_NUM(x)        (htonl((x) << 2))
-#define PACK_PTR(x,sz)     (htonl(((x) << 10) | (((sz)&0xff) << 2) | 3))
-#define PACK_VM_CONST(x)   (htonl(((x) << 2)  | 2))
-#define PACK_LANG_CONST(x) (htonl(((x) << 2)  | 1))
+#define PACK_NUM(x)        (htonl((x) << 2 | NUM))
+#define PACK_PTR(x,sz)     (htonl(((x) << 10) | (((sz)&0xff) << 2) | PTR))
+#define PACK_VM_CONST(x)   (htonl(((x) << 2)  | VCONST))
+#define PACK_LANG_CONST(x) (htonl(((x) << 2)  | LCONST))
+#define PACK_CHAR(x)       PACK_VM_CONST(x << 22)
 
   static struct {    //  1024 labels should be sufficient since
     char *txt;      //  a program is at the moment at most 1024 
@@ -40,7 +41,64 @@ D_NUM   (\+|-)?{DIGIT}+
 X_NUM   0[xX]{XDIGIT}+
 IDENT   [a-zA-Z_][a-zA-Z_0-9]*
 
+STRCHARS (\\\")|([^\"])
+
 %%
+'[^\\]'   {out_buffer[words++] = PACK_CHAR(*(yytext+1));}
+'\\\\'    {out_buffer[words++] = PACK_CHAR('\\');}
+'\\\''    {out_buffer[words++] = PACK_CHAR('\'');}
+'\\\"'    {out_buffer[words++] = PACK_CHAR('"');}
+'\\a'     {out_buffer[words++] = PACK_CHAR('\a');}
+'\\b'     {out_buffer[words++] = PACK_CHAR('\b');}
+'\\f'     {out_buffer[words++] = PACK_CHAR('\f');}
+'\\n'     {out_buffer[words++] = PACK_CHAR('\n');}
+'\\r'     {out_buffer[words++] = PACK_CHAR('\r');}
+'\\t'     {out_buffer[words++] = PACK_CHAR('\t');}
+'\\v'     {out_buffer[words++] = PACK_CHAR('\v');}
+'\\x{XDIGIT}{XDIGIT}' {out_buffer[words++] = PACK_CHAR(strtoul(yytext+3, NULL, 16));}
+"\""{STRCHARS}*"\"" {
+  int i;
+  for(i=1;i<yyleng-1;i++){
+    if(yytext[i] == '\\'){
+      i++;
+      switch(yytext[i]){
+      case '\\': out_buffer[words++] = PACK_CHAR('\\');
+	break;
+      case '\'': out_buffer[words++] = PACK_CHAR('\'');
+	break;
+      case '\"': out_buffer[words++] = PACK_CHAR('\"');
+	break;
+      case 'a': out_buffer[words++] = PACK_CHAR('\a');
+	break;
+      case 'b': out_buffer[words++] = PACK_CHAR('\b');
+	break;
+      case 'f': out_buffer[words++] = PACK_CHAR('\f');
+	break;
+      case 'n': out_buffer[words++] = PACK_CHAR('\n');
+	break;
+      case 'r': out_buffer[words++] = PACK_CHAR('\r');
+	break;
+      case 't': out_buffer[words++] = PACK_CHAR('\t');
+	break;
+      case 'v': out_buffer[words++] = PACK_CHAR('\v');
+	break;
+      case 'x': {
+	char tmp[3] = {yytext[i+1], yytext[i+2], '\0'};
+	out_buffer[words++] = PACK_CHAR(strtoul(tmp, NULL, 16));
+	i+=2;
+	break;
+      }
+      default:
+	fprintf(stderr, 
+		"Unrecognized escape character '%c' in string constant: %s\n",
+		yytext[i], yytext);
+	exit(1);
+      }
+    }else{
+      out_buffer[words++] = PACK_CHAR(yytext[i]);
+    }
+  }
+}
 
 n{X_NUM} {out_buffer[words++] = PACK_NUM(strtoul(yytext+1, NULL, 16));}
 n{D_NUM} {out_buffer[words++] = PACK_NUM(strtol(yytext+1, NULL, 10));}
@@ -155,11 +213,13 @@ int main(int argc, char *argv[])
     exit(1);
   }
   yylex();
+/*
   if(words > 1024){
     fprintf(stderr, "Warning: Program is more than 1024 words.  "
 	    "Interpreter may fail\n");
     failure = 1;
   }
+*/
   for(i=0;i<nr_unresolved;i++){
     if(unresolved_labels[i].txt != NULL){
       fprintf(stderr, "Unresolved reference to label: \"%s\" at offset %d\n",
