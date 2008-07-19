@@ -8,6 +8,6 @@
 (define print-string
   (lambda (s) (print-string-list (string->list s))))
 
-(define length (lambda (s) (if (null? s) 0 (+ 1 (length (cdr s))))))
-
-(print-num (string-length "Hello world")))
+(print-string "The string \"Hello world\\n\" is ")
+(print-num (string-length "Hello world\n"))
+(print-string " characters long.\n")

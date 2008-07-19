@@ -4,11 +4,11 @@
 #include <stdio.h>
 #include "interpreter.h"
 
-#define PACK_NUM(x)        (htonl((x) << 2 | NUM))
-#define PACK_PTR(x,sz)     (htonl(((x) << 10) | (((sz)&0xff) << 2) | PTR))
-#define PACK_VM_CONST(x)   (htonl(((x) << 2)  | VCONST))
-#define PACK_LANG_CONST(x) (htonl(((x) << 2)  | LCONST))
-#define PACK_CHAR(x)       PACK_VM_CONST(x << 22)
+#define PACK_NUM(x)        htonl(MAKE_NUM(x))
+#define PACK_PTR(x,sz)     htonl(MAKE_PTR(x,sz))
+#define PACK_VM_CONST(x)   htonl(x)
+#define PACK_LANG_CONST(x) htonl(MAKE_LCONST(x))
+#define PACK_CHAR(x)       PACK_VM_CONST(MAKE_CHAR(x))
 
   static struct {    //  1024 labels should be sufficient since
     char *txt;      //  a program is at the moment at most 1024 
@@ -115,31 +115,42 @@ l{D_NUM}         {out_buffer[words++] = PACK_VM_CONST(strtol(yytext+1, NULL, 10)
 
 ;;.*\n         {}
 #.*\n          {}
-PUSH  {out_buffer[words++] = PACK_VM_CONST(I_PUSH);}
-POP   {out_buffer[words++] = PACK_VM_CONST(I_POP); }
-SWAP  {out_buffer[words++] = PACK_VM_CONST(I_SWAP);}
-DUP   {out_buffer[words++] = PACK_VM_CONST(I_DUP); }
-ROT   {out_buffer[words++] = PACK_VM_CONST(I_ROT); }
-CALL  {out_buffer[words++] = PACK_VM_CONST(I_CALL);}
-RET   {out_buffer[words++] = PACK_VM_CONST(I_RET); }
-JMP   {out_buffer[words++] = PACK_VM_CONST(I_JMP); }
-JEQ   {out_buffer[words++] = PACK_VM_CONST(I_JEQ); }
-END   {out_buffer[words++] = PACK_VM_CONST(I_END); }
-ADD   {out_buffer[words++] = PACK_VM_CONST(I_ADD); }
-MUL   {out_buffer[words++] = PACK_VM_CONST(I_MUL); }
-SHL   {out_buffer[words++] = PACK_VM_CONST(I_SHL); }
-SHR   {out_buffer[words++] = PACK_VM_CONST(I_SHR); }
-BOR   {out_buffer[words++] = PACK_VM_CONST(I_BOR); }
-BAND  {out_buffer[words++] = PACK_VM_CONST(I_BAND);}
-STOR  {out_buffer[words++] = PACK_VM_CONST(I_STOR);}
-LOAD  {out_buffer[words++] = PACK_VM_CONST(I_LOAD);}
-ALOC  {out_buffer[words++] = PACK_VM_CONST(I_ALOC);}
-GETC  {out_buffer[words++] = PACK_VM_CONST(I_GETC);}
-DUMP  {out_buffer[words++] = PACK_VM_CONST(I_DUMP);}
-PINT  {out_buffer[words++] = PACK_VM_CONST(I_PINT);}
-PCHR  {out_buffer[words++] = PACK_VM_CONST(I_PCHR);}
-RDRR  {out_buffer[words++] = PACK_VM_CONST(I_RDRR);}
-WTRR  {out_buffer[words++] = PACK_VM_CONST(I_WTRR);}
+PUSH     {out_buffer[words++] = PACK_VM_CONST(I_PUSH);}
+POP      {out_buffer[words++] = PACK_VM_CONST(I_POP); }
+SWAP     {out_buffer[words++] = PACK_VM_CONST(I_SWAP);}
+DUP      {out_buffer[words++] = PACK_VM_CONST(I_DUP); }
+ROT      {out_buffer[words++] = PACK_VM_CONST(I_ROT); }
+CALL     {out_buffer[words++] = PACK_VM_CONST(I_CALL);}
+RET      {out_buffer[words++] = PACK_VM_CONST(I_RET); }
+JMP      {out_buffer[words++] = PACK_VM_CONST(I_JMP); }
+JTRUE    {out_buffer[words++] = PACK_VM_CONST(I_JTRUE); }
+END      {out_buffer[words++] = PACK_VM_CONST(I_END); }
+ADD      {out_buffer[words++] = PACK_VM_CONST(I_ADD); }
+MUL      {out_buffer[words++] = PACK_VM_CONST(I_MUL); }
+SHL      {out_buffer[words++] = PACK_VM_CONST(I_SHL); }
+SHR      {out_buffer[words++] = PACK_VM_CONST(I_SHR); }
+BOR      {out_buffer[words++] = PACK_VM_CONST(I_BOR); }
+BAND     {out_buffer[words++] = PACK_VM_CONST(I_BAND);}
+EQ       {out_buffer[words++] = PACK_VM_CONST(I_EQ);  }
+LT       {out_buffer[words++] = PACK_VM_CONST(I_LT);  }
+STOR     {out_buffer[words++] = PACK_VM_CONST(I_STOR);}
+LOAD     {out_buffer[words++] = PACK_VM_CONST(I_LOAD);}
+ALOC     {out_buffer[words++] = PACK_VM_CONST(I_ALOC);}
+GETC     {out_buffer[words++] = PACK_VM_CONST(I_GETC);}
+DUMP     {out_buffer[words++] = PACK_VM_CONST(I_DUMP);}
+PINT     {out_buffer[words++] = PACK_VM_CONST(I_PINT);}
+PCHR     {out_buffer[words++] = PACK_VM_CONST(I_PCHR);}
+RDRR     {out_buffer[words++] = PACK_VM_CONST(I_RDRR);}
+WTRR     {out_buffer[words++] = PACK_VM_CONST(I_WTRR);}
+ISNUM    {out_buffer[words++] = PACK_VM_CONST(I_ISNUM);}
+ISPTR    {out_buffer[words++] = PACK_VM_CONST(I_ISPTR);}
+ISLCONST {out_buffer[words++] = PACK_VM_CONST(I_ISLCONST);}
+ISCHR    {out_buffer[words++] = PACK_VM_CONST(I_ISCHR);}
+ISBOOL   {out_buffer[words++] = PACK_VM_CONST(I_ISBOOL);}
+ISINS    {out_buffer[words++] = PACK_VM_CONST(I_ISINS);}
+
+TRUE     {out_buffer[words++] = PACK_VM_CONST(TRUE_VAL);}
+FALSE    {out_buffer[words++] = PACK_VM_CONST(FALSE_VAL);}
 
 :{IDENT},{D_NUM} {
   int i;

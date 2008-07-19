@@ -8,15 +8,21 @@
 				   (if (f (car l))
 				       (for-all? f (cdr l)) #f))))
 
-(define is-number? (lambda (str)
-		     (for-all? (lambda (x) (and (char>=? x #\0)  (char<=? x #\9)))
-			       (string->list str))))
+(define is-numeric? (lambda (str)
+		      (for-all? (lambda (x) (and (char>=? x #\0)  (char<=? x #\9)))
+				(string->list str))))
 
 (define asm-number  (lambda (x) (string-append "n" (if (number? x) (number->string x) x))))
 (define asm-pointer (lambda (x y) (string-append "p" (if (number? x) (number->string x) x) 
 						 "," (if (number? x) (number->string y) y)
 						 )))
 (define asm-lang-const (lambda (x) (string-append "l" (if (number? x) (number->string x) x))))
+
+; Language constants
+(define false-value  "TRUE")
+(define true-value   "FALSE")
+(define string-type-flag (asm-lang-const 2))
+(define symbol-type-flag (asm-lang-const 3))
 
 (define calculate-string-list-length
   (lambda (sl n)
@@ -68,8 +74,7 @@
 ; (LOAD, STORE, and ARITHMETIC), 
 ; PUSH would take an immediate numeric argument (and shift left by two)
 ; new instructions TOP, and TOC, and TOI would coerce between the types
-(define true-value (asm-lang-const 1))
-(define false-value (asm-lang-const 0))
+
 
 ; these are runtime constants used for tracking
 ; the heap and the environment
@@ -153,7 +158,6 @@
   (lambda () (append-instructions (list "PUSH" (asm-number 0) "STOR"))))
 (define assembly-set-cdr 
   (lambda () (append-instructions (list "PUSH" (asm-number 1) "STOR"))))
-
 
 ; these define how to call the three primitives car, cdr, and cons as
 ; part of larger compiler generated sequences (e.g., function application)
@@ -308,7 +312,8 @@
      (append-instructions (list "PUSH" (string-append "@" strlabel)))
      (lambda ()         
        (append-instructions 
-	(list (string-append ":" (string-append strlabel (string-append "," (number->string (+ strlen 1)))))
+	(list (string-append ":" (string-append strlabel (string-append "," (number->string (+ strlen 2)))))
+	      string-type-flag
 	      (asm-number strlen)
 	      s))
        #f))))
@@ -338,15 +343,19 @@
 
 (define compile-atom 
   (lambda (x env) 
-    (if (is-number? x)
-	(compile-number x env) 
-	(if (char=? (car (string->list x)) #\")
-	    (compile-string x env)
-	    (if (char=? (car (string->list x)) #\#)
-		(compile-char x env)
-		(if (string=? "nil" x) 
-		    (begin (assembly-nil) #f)
-		    (compile-reference x env)))))))
+    (if (string= x "#t")
+	(begin (append-instructions (list "PUSH" true-value)) #f)
+	(if (string= x "#f")
+	    (begin (append-instructions (list "PUSH" false-value)) #f)
+	    (if (is-number? x)
+		(compile-number x env) 
+		(if (char=? (car (string->list x)) #\")
+		    (compile-string x env)
+		    (if (char=? (car (string->list x)) #\#)
+			(compile-char x env)
+			(if (string=? "nil" x) 
+			    (begin (assembly-nil) #f)
+			    (compile-reference x env)))))))))
 
 ; this is right, but breaks the normal continuation passing form 
 ; of compile-* functions.
@@ -417,17 +426,16 @@
 ; we can avoid function call overhead and just inline the assembly
 (define compile-if
   (lambda (l env rest)
-    (let ((false-label (fresh-label))
+    (let ((true-label (fresh-label))
 	  (join-label (fresh-label)))
       (let ((r1 (compile-sexp (car (cdr l)) env #t))
 	    (x  (append-instructions 
-		 (list "PUSH" false-value
-		       "PUSH" (string-append "@" false-label)
-		       "JEQ")))
-	    (r2 (compile-sexp (car (cdr (cdr l))) env rest))
+		 (list "PUSH" (string-append "@" true-label)
+		       "JTRUE")))
+	    (r2 (compile-sexp (car (cdr (cdr (cdr l)))) env rest))
 	    (y  (append-instructions (list "PUSH" (string-append "@" join-label) "JMP"
-					   (string-append ":" false-label))))
-	    (r3 (compile-sexp (car (cdr (cdr (cdr l)))) env rest)))
+					   (string-append ":" true-label))))
+	    (r3 (compile-sexp (car (cdr (cdr l))) env rest)))
 	(append-instruction (string-append ":" join-label))
 	(lambda ()
 	  (do-compile-task r1)
@@ -560,26 +568,35 @@
      (list ":equal,2" "@__initial_env" "@__equal" ":__equal"))
     (assembly-env-val 0 0)
     (assembly-env-val 0 1)
-    (append-instructions
-     (list "PUSH" "@__equal_true" "JEQ" 
-    ; they weren't equal! push false and exit
-	   "PUSH" false-value)) 
-    (assembly-funret)
-    ; they were equal! push true and exit
-    (append-instructions
-     (list ":__equal_true" "PUSH" true-value))
+    (append-instruction "EQ")
     (assembly-funret)
 
+    ; questions
     (append-instructions
      (list ":null_q,2" "@__initial_env" "@__null_q" ":__null_q"))
     (assembly-env-val 0 0)
     (assembly-nil)
-    (append-instructions
-     (list "PUSH" "@__null_q_true" "JEQ"
-	   "PUSH" false-value))
+    (append-instruction "EQ")
+    (assembly-funret)
+
+    (append-instructions 
+     (list ":string_q,2" "@__initial_env" "@__string_q" ":__string_q"))
+    (assembly-env-val 0 0)
+    (append-instructions 
+     (list "DUP" 
+	   "ISPTR"
+	   "PUSH" "@__string_q_is_ptr"
+	   "EQ"
+	   "JTRUE" 
+	   "POP"
+	   "PUSH" "FALSE"))
     (assembly-funret)
     (append-instructions
-     (list ":__null_q_true" "PUSH" true-value))
+     (list ":__string_q_is_ptr"
+	   "PUSH" (asm-number 0)
+	   "LOAD"
+	   "PUSH" string-type-flag
+	   "EQ"))
     (assembly-funret)
 
     (append-instructions
@@ -598,9 +615,7 @@
     (append-instructions
      (list ":string_length,2" "@__initial_env" "@__string_length" ":__string_length"))
     (assembly-env-val 0 0)
-    (u-call-car)                        ; this is cheating but it works 
-					; because the 0'th element of a string 
-					; is its length.
+    (append-instructions (list "PUSH" (asm-number 1) "LOAD"))
     (assembly-funret)
 
     ; converting a string to a list is a PIA. 
@@ -609,59 +624,71 @@
     (assembly-env-val 0 0)
     (append-instructions
      (list "DUP"                        ; (str-ptr str-ptr)
-	   "PUSH" (asm-number 0)        ; (str-ptr str-ptr 0)
-	   "LOAD"))                     ; (str-ptr str-len)
+	   "PUSH" (asm-number 1)        ; (str-ptr str-ptr 0)
+	   "LOAD"                       ; (str-ptr str-len)
+	   "PUSH" (asm-number 1)        ; (str-ptr str-len 1)
+	   "ADD"))                      ; (str-ptr (+ str-len 1))
     (assembly-nil)                      ; (str-ptr str-len nil)
-    (u-call-cons)                       ; (str-ptr (nil . str-len) )
+    (u-call-cons)                       ; (str-ptr (nil . (+ str-len 1) ) )
+					; Note: On each iteration through the loop 
+					;       we want to grab the last element of the 
+					;       string that hasn't been copied.
+					;       the layout of the string is:
+					;       [type-flag, length, data....]
+					;       So the last character of the string
+					;       is at address (+ str-ptr length 1)
+					;       and in general, the last uncopied char
+					;       is at (+ str-ptr len-left 1)
     (append-instructions
      (list ":__string_list_loop"        ; loop header
-					; (str-ptr (rval . len-left))
-	   "DUP"))                      ; (str-ptr (rval . len-left) (rval . len-left) )
-    (u-call-cdr)                        ; (str-ptr (rval . len-left) len-left)
+					; (str-ptr (rval . (+ len-left 1) ))
+	   "DUP"))                      ; (str-ptr (rval . (+ len-left 1) ) (rval . (+ len-left 1)) )
+    (u-call-cdr)                        ; (str-ptr (rval . (+ len-left 1)) (+ len-left 1))
     (append-instructions
-     (list "PUSH" (asm-number 0)        ; (str-ptr (rval . len-left) len-left 0)
-	   "PUSH" "@__string_list_done" ; (str-ptr (rval . len-left) len-left 0 @__string_list_done)
-	   "JEQ"                        ; (str-ptr (rval . len-left))
-	   "DUP"))                      ; (str-ptr (rval . len-left) (rval . len-left))
-    (u-call-cdr)                        ; (str-ptr (rval . len-left) len-left)
+     (list "PUSH" (asm-number 1)        ; (str-ptr (rval . (+ len-left 1)) (+ len-left 1) 1)
+	   "EQ"
+	   "PUSH" "@__string_list_done" ; (str-ptr (rval . (+ len-left 1)) (+ len-left 1) 1 @__string_list_done)
+	   "JTRUE"                      ; (str-ptr (rval . (+ len-left 1)))
+	   "DUP"))                      ; (str-ptr (rval . (+ len-left 1)) (rval . (+ len-left 1)))
+    (u-call-cdr)                        ; (str-ptr (rval . (+ len-left 1)) (+ len-left 1))
 					; this could be hoisted to a DUP above the loop test
     (append-instructions 
-     (list "SWAP"                       ; (str-ptr len-left (rval . len-left) )
-	   "ROT"                        ; ((rval . len-left) str-ptr len-left)
-	   "SWAP"                       ; ((rval . len-left) len-left str-ptr)
-	   "DUP"                        ; ((rval . len-left) len-left str-ptr str-ptr)
-	   "ROT"                        ; ((rval . len-left) str-ptr len-left str-ptr)
-	   "SWAP"                       ; ((rval . len-left) str-ptr str-ptr len-left)
-	   "LOAD"                       ; ((rval . len-left) str-ptr str[len-left])
-	   "SWAP"                       ; ((rval . len-left) str[len-left] str-ptr)
-	   "ROT"                        ; (str-ptr (rval . len-left) str[len-left])
-	   "SWAP"                       ; (str-ptr str[len-left] (rval . len-left))
-	   "DUP"                        ; (str-ptr str[len-left] (rval . len-left) (rval . len-left))
-	   "ROT"))                      ; (str-ptr (rval . len-left) str[len-left] (rval . len-left))
-    (u-call-car)                        ; (str-ptr (rval . len-left) str[len-left] rval)
-    (append-instruction "SWAP")         ; (str-ptr (rval . len-left) rval str[len-left])
-    (u-call-cons)                       ; (str-ptr (rval . len-left) (str[len-left] . rval))
+     (list "SWAP"                       ; (str-ptr (+ len-left 1) (rval . (+ len-left 1) ) )
+	   "ROT"                        ; ((rval . (+ len-left 1)) str-ptr (+ len-left 1))
+	   "SWAP"                       ; ((rval . (+ len-left 1)) (+ len-left 1) str-ptr)
+	   "DUP"                        ; ((rval . (+ len-left 1)) (+ len-left 1) str-ptr str-ptr)
+	   "ROT"                        ; ((rval . (+ len-left 1)) str-ptr (+ len-left 1) str-ptr)
+	   "SWAP"                       ; ((rval . (+ len-left 1)) str-ptr str-ptr (+ len-left 1))
+	   "LOAD"                       ; ((rval . (+ len-left 1))) str-ptr str[(+ len-left 1)])
+	   "SWAP"                       ; ((rval . (+ len-left 1)) str[(+ len-left 1)] str-ptr)
+	   "ROT"                        ; (str-ptr (rval . (+ len-left 1)) str[(+ len-left 1)])
+	   "SWAP"                       ; (str-ptr str[(+ len-left 1)] (rval . (+ len-left 1)))
+	   "DUP"                        ; (str-ptr str[(+ len-left 1)] (rval . (+ len-left 1)) (rval . (+ len-left 1)))
+	   "ROT"))                      ; (str-ptr (rval . (+ len-left 1)) str[(+ len-left 1)] (rval . (+ len-left 1)))
+    (u-call-car)                        ; (str-ptr (rval . (+ len-left 1)) str[(+ len-left 1)] rval)
+    (append-instruction "SWAP")         ; (str-ptr (rval . (+ len-left 1)) rval str[(+ len-left 1)])
+    (u-call-cons)                       ; (str-ptr (rval . (+ len-left 1)) (str[(+ len-left 1)] . rval))
     (append-instructions 
-     (list "SWAP"                       ; (str-ptr (str[len-left] . rval) (rval . len-left))
-	   "DUP"                        ; (str-ptr (str[len-left] . rval) (rval . len-left) (rval . len-left))
-	   "ROT"))                      ; (str-ptr (rval . len-left) (str[len-left] . rval) (rval . len-left))
-    (u-call-set-car)                    ; (str-ptr (rval . len-left)) -- rval is updated
+     (list "SWAP"                       ; (str-ptr (str[(+ len-left 1)] . rval) (rval . (+ len-left 1)))
+	   "DUP"                        ; (str-ptr (str[(+ len-left 1)] . rval) (rval . (+ len-left 1)) (rval . (+ len-left 1)))
+	   "ROT"))                      ; (str-ptr (rval . (+ len-left 1)) (str[(+ len-left 1)] . rval) (rval . (+ len-left 1)))
+    (u-call-set-car)                    ; (str-ptr (rval . (+ len-left 1))) -- rval is updated
     (append-instructions
-     (list "DUP"                        ; (str-ptr (rval . len-left) (rval . len-left))
-	   "DUP"))                      ; (str-ptr (rval . len-left) (rval . len-left) (rval . len-left))
-    (u-call-cdr)                        ; (str-ptr (rval . len-left) (rval . len-left) len-left)
+     (list "DUP"                        ; (str-ptr (rval . (+ len-left 1)) (rval . (+ len-left 1)))
+	   "DUP"))                      ; (str-ptr (rval . (+ len-left 1)) (rval . (+ len-left 1)) (rval . (+ len-left 1)))
+    (u-call-cdr)                        ; (str-ptr (rval . (+ len-left 1)) (rval . (+ len-left 1)) (+ len-left 1))
     (append-instructions 
-     (list "PUSH" (asm-number -1)       ; (str-ptr (rval . len-left) (rval . len-left) len-left -1)
-	   "ADD"                        ; (str-ptr (rval . len-left) (rval . len-left) (- len-left 1))
-	   "SWAP"))                     ; (str-ptr (rval . len-left) (- len-left 1) (rval . len-left) )
+     (list "PUSH" (asm-number -1)       ; (str-ptr (rval . (+ len-left 1)) (rval . (+ len-left 1)) (+ len-left) -1)
+	   "ADD"                        ; (str-ptr (rval . (+ len-left 1)) (rval . (+ len-left 1)) len-left)
+	   "SWAP"))                     ; (str-ptr (rval . (+ len-left 1)) len-left (rval . (+ len-left 1)) )
     (u-call-set-cdr)                    ; (str-ptr (rval . len-left)) --len-left has been updated
     (append-instructions
      (list "PUSH" "@__string_list_loop" ; (str-ptr (rval . len-left) @__string_list_loop)
 	   "JMP"))
     (append-instructions
-     (list ":__string_list_done"        ; out of the loop. stack is (str-ptr (rval . 0))
-	   "SWAP"                       ; ((rval . 0) str-ptr)
-	   "POP"))                      ; ((rval . 0))
+     (list ":__string_list_done"        ; out of the loop. stack is (str-ptr (rval . 1))
+	   "SWAP"                       ; ((rval . 1) str-ptr)
+	   "POP"))                      ; ((rval . 1))
     (u-call-car)                        ; (rval)
     (assembly-funret)
     

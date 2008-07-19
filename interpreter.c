@@ -103,24 +103,23 @@
 #define unlikely(x)     __builtin_expect((x),0)
 #define likely(x)     __builtin_expect((x),1)
 
-#define MAKE_PTR(x,sz) ( ((x) << 10) | (((sz)  & 0xff) << 2) | PTR)
 #define PTR_TARGET(x) (((unsigned long)x) >> 10)
 #define PTR_SIZE(x)   ((((unsigned long)x) >> 2) & 0xff)
 
 #define NUM_TO_NATIVE(x) ((x) >> 2 | NUM)
-#define MAKE_NUM(x) ((x) << 2)
 
-#define MAKE_CHAR(x) (((x) << 24) | VCONST)
 #define CHAR_TO_NATIVE(x) ((x) >> 24)
-
-// MAKE_TYPE doesn't work for pointers!
-#define MAKE_TYPE(x, t) ((x << 2) | t)
 
 #define CELL_TYPE(x) ((x) & 0x3)
 
-#define IS_NUM(x) (CELL_TYPE(x) == NUM)
-#define IS_PTR(x) (CELL_TYPE(x) == PTR)
-#define IS_CONST(x) ({char __tmp = CELL_TYPE(x); (x == LCONST) || (x == VCONST)})
+#define IS_NUM(x)    (CELL_TYPE(x) == NUM)
+#define IS_PTR(x)    (CELL_TYPE(x) == PTR)
+#define IS_LCONST(x) (CELL_TYPE(x) == LCONST)
+#define IS_VCONST(x) (CELL_TYPE(x) == VCONST)
+#define IS_CONST(x)  ({long __tmp = (x); (IS_LCONST(__tmp)  || IS_VCONST(__tmp));})
+#define IS_BOOL(x)   ({long __tmp = (x); (__tmp == TRUE_VAL || __tmp == FALSE_VAL);})
+#define IS_CHAR(x)   ({long __tmp = (x); (IS_VCONST(__tmp) && __tmp & 0x00fffffc == 0);})
+#define IS_INS(x)    ({long __tmp = (x); (IS_VCONST(__tmp) && ( __tmp >> 2) < NR_INS);})
 
 #define ASSERT_TYPE(x,t)     if(unlikely(CELL_TYPE(x) != t)){TYPE_ERROR(t);}
 #define ASSERT_NOT_TYPE(x,t) if(unlikely(CELL_TYPE(x) == t)){TYPE_ERROR(!t);}
@@ -373,14 +372,17 @@ int main(int argc, char *argv[])
 
     /* Control flow */
     (long)&&CALL,
-    (long)&&RET,  (long)&&JMP,  
-    (long)&&JEQ,    (long)&&END,
+    (long)&&RET,   (long)&&JMP,  
+    (long)&&JTRUE, (long)&&END,
     
     /* Arithmetic */
     (long)&&PLUS, (long)&&MUL, 
     (long)&&SHL,  (long)&&SHR, 
     (long)&&BOR,  (long)&&BAND,
     
+    /* Comparison */
+    (long)&&EQ,   (long)&&LT,
+
     /* Reading and writing memory */
     (long)&&STOR, (long)&&LOAD, (long)&&ALOC,
     
@@ -389,7 +391,12 @@ int main(int argc, char *argv[])
     (long)&&PINT, (long)&&PCHR,
 
     /* Root Register manipulation */
-    (long)&&RDRR, (long)&&WTRR
+    (long)&&RDRR, (long)&&WTRR,
+
+    /* Type checking */
+    (long)&&ISNUM, (long)&&ISLCONST,
+    (long)&&ISPTR, (long)&&ISBOOL,
+    (long)&&ISCHR, (long)&&ISINS
   };
 
   int fd;
@@ -458,12 +465,12 @@ int main(int argc, char *argv[])
 
   INSTRUCTION(JMP, ASSERT_TYPE(STACK(0), PTR); pc = memory + PTR_TARGET(STACK_POP()));
 
-  INSTRUCTION(JEQ,  
+  INSTRUCTION(JTRUE,  
 	      do{
 		ASSERT_TYPE(STACK(0), PTR);
-		pc = STACK(1) ==  STACK(2) ? memory + PTR_TARGET(STACK(0)) : pc; 
+		if(unlikely(!IS_BOOL(STACK(1)))){TYPE_ERROR(BOOL);}
+		pc = (STACK(1) ==  TRUE_VAL) ? memory + PTR_TARGET(STACK(0)) : pc; 
 		STACK_POP(); 
-		STACK_POP();
 		STACK_POP();
 	      }while(0)
 	      );
@@ -477,40 +484,52 @@ int main(int argc, char *argv[])
   INSTRUCTION(PLUS,
 	      ASSERT_TYPE(STACK(0), NUM);
 	      ASSERT_TYPE(STACK(1), NUM);
-	      STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) +  NUM_TO_NATIVE(STACK(0)), CELL_TYPE(STACK(1)));
+	      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) +  NUM_TO_NATIVE(STACK(0)));
 	      STACK_POP();
 	      );
     
   INSTRUCTION(MUL, do{
-      ASSERT_TYPE(STACK(0), NUM); ASSERT_NOT_TYPE(STACK(1), PTR);
-      STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) * NUM_TO_NATIVE(STACK(0)),CELL_TYPE(STACK(1))); 
+      ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);
+      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) * NUM_TO_NATIVE(STACK(0))); 
       STACK_POP();
     }while(0));
 
   INSTRUCTION(SHL, do{
-      ASSERT_TYPE(STACK(0), NUM); ASSERT_NOT_TYPE(STACK(1), PTR);
-      STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) << NUM_TO_NATIVE(STACK(0)),CELL_TYPE(STACK(1))); 
+      ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);
+      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) << NUM_TO_NATIVE(STACK(0)));
       STACK_POP();
     }while(0));
 
   INSTRUCTION(SHR, do{
-      ASSERT_TYPE(STACK(0), NUM); ASSERT_NOT_TYPE(STACK(1), PTR);
-      STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) >> NUM_TO_NATIVE(STACK(0)),CELL_TYPE(STACK(1))); 
+      ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);
+      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) >> NUM_TO_NATIVE(STACK(0)));
       STACK_POP();
     }while(0));
 
   INSTRUCTION(BOR, do{
-      ASSERT_TYPE(STACK(0), NUM); ASSERT_NOT_TYPE(STACK(1), PTR);
-      STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) | NUM_TO_NATIVE(STACK(0)),CELL_TYPE(STACK(1))); 
+      ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);
+      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) | NUM_TO_NATIVE(STACK(0)));
       STACK_POP();
     }while(0));
 
   INSTRUCTION(BAND, do{
-      ASSERT_TYPE(STACK(0), NUM); ASSERT_NOT_TYPE(STACK(1), PTR);
-      STACK(1) = MAKE_TYPE(NUM_TO_NATIVE(STACK(1)) & NUM_TO_NATIVE(STACK(0)),CELL_TYPE(STACK(1))); 
+      ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);
+      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) & NUM_TO_NATIVE(STACK(0)));
       STACK_POP();
     }while(0));
   
+  /* Comparison */
+  INSTRUCTION(EQ, do{
+      STACK(1) = (STACK(0) == STACK(1) ? TRUE_VAL : FALSE_VAL); 
+      STACK_POP();
+    }while(0));
+
+  INSTRUCTION(LT, do{
+      ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM); 
+      STACK(1) = (STACK(0) < STACK(1) ? TRUE_VAL : FALSE_VAL); 
+      STACK_POP();
+    }while(0));
+
   /* memory access */
   INSTRUCTION(STOR, do{
       ASSERT_TYPE(STACK(0), NUM)
@@ -554,12 +573,20 @@ int main(int argc, char *argv[])
   /* I/O */
   INSTRUCTION(GETC, STACK_PUSH(MAKE_CHAR(getchar())));
   INSTRUCTION(DUMP, DO_DUMP(stdout));
-  INSTRUCTION(PINT, ASSERT_TYPE(STACK(0), NUM);    printf("%ld\n", NUM_TO_NATIVE(STACK(0))); STACK_POP());
+  INSTRUCTION(PINT, ASSERT_TYPE(STACK(0), NUM);    printf("%ld", NUM_TO_NATIVE(STACK(0))); STACK_POP());
   INSTRUCTION(PCHR, ASSERT_TYPE(STACK(0), VCONST); putchar(CHAR_TO_NATIVE(STACK_POP())));
 
+  /* Root register manipulation */
   INSTRUCTION(RDRR, STACK_PUSH(rr));
   INSTRUCTION(WTRR, rr = STACK_POP());
 
+  /* type checking */
+  INSTRUCTION(ISNUM,    STACK(0) = (IS_NUM(STACK(0)))    ? TRUE_VAL : FALSE_VAL);
+  INSTRUCTION(ISLCONST, STACK(0) = (IS_LCONST(STACK(0))) ? TRUE_VAL : FALSE_VAL);
+  INSTRUCTION(ISPTR,    STACK(0) = (IS_PTR(STACK(0)))    ? TRUE_VAL : FALSE_VAL);
+  INSTRUCTION(ISBOOL,   STACK(0) = (IS_BOOL(STACK(0)))   ? TRUE_VAL : FALSE_VAL);
+  INSTRUCTION(ISCHR,    STACK(0) = (IS_CHAR(STACK(0)))   ? TRUE_VAL : FALSE_VAL);
+  INSTRUCTION(ISINS,    STACK(0) = (IS_INS(STACK(0)))    ? TRUE_VAL : FALSE_VAL);
   return 0;
 }
   
