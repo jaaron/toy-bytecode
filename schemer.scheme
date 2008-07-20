@@ -8,14 +8,24 @@
 				   (if (f (car l))
 				       (for-all? f (cdr l)) #f))))
 
+; check if a string represents a numeric constant.
+; i.e., the string "123" is numeric
 (define is-numeric? (lambda (str)
 		      (for-all? (lambda (x) (and (char>=? x #\0)  (char<=? x #\9)))
 				(string->list str))))
 
+; The underlying VM uses a tagged memory model that differentiates between
+; numbers, pointers, vm constants, and language constants. 
+; Numeric values in the assembly must be tagged with an appropriate identifier
+; to convince the assembler to tag the cell with the appropriate type.  
+;
+; return a string containing the asm representation of a number
 (define asm-number  (lambda (x) (string-append "n" (if (number? x) (number->string x) x))))
+; return a string containing the asm representation of a pointer
 (define asm-pointer (lambda (x y) (string-append "p" (if (number? x) (number->string x) x) 
 						 "," (if (number? x) (number->string y) y)
 						 )))
+; return a string containing the asm representation of a language constant
 (define asm-lang-const (lambda (x) (string-append "l" (if (number? x) (number->string x) x))))
 
 ; Language constants
@@ -24,69 +34,81 @@
 (define string-type-flag (asm-lang-const 2))
 (define symbol-type-flag (asm-lang-const 3))
 
-(define calculate-string-list-length
-  (lambda (sl n)
-    (if (null? sl) n
-	(if (char=? (car sl) #\\) 
-	    (calculate-string-list-length (cdr (cdr sl)) (+ n 1))
-	    (calculate-string-list-length (cdr sl) (+ n 1))))))
-
-
-(define calculate-string-length 
-  (lambda (s) (- (calculate-string-list-length (string->list s) 0) 2)))
-
-; identifies functions that have special meaning
-; to the compiler.
+; A few builtin forms are handled specially
+; by the compiler.  Some of these will later
+; be subsumed by macro capabilities but for right
+; now they are just special voodoo.
+;
+; This list associates the symbols with special
+; compiler functions.
 (define builtin-forms 
   (lambda ()
     (list
      (cons "lambda" compile-lambda)
+     (cons "let"    compile-let)
      (cons "if"     compile-if)
      (cons "define" compile-define)  
      (cons "begin"  compile-begin)
+     (cons "quote"  compile-quote)
      )
     ))
 
-(define find-builtin 
+; search the list of builtin forms for a 
+; particular form
+(define find-builtin-helper
   (lambda (f ss)
     (if (null? ss) #f
 	(if (and (string? f) 
 		 (string= f (car (car ss))))
 	    (cdr (car ss))
-	    (find-builtin f (cdr ss))))))
+	    (find-builtin-helper f (cdr ss))))))
+    
+(define find-builtin 
+  (lambda (f) (find-builtin-helper f (builtin-forms))))    
 
-
-; I really need to fix the object representation 
-; scheme.  Right now pointers are identified by setting
-; the high bit (and all pointers point to cons boxes)
-; and false = 0 and true = 1.  This isn't really ideal
-; because it breaks scheme's model where false (#f) and true (#t)
-; are not integers, and it makes negative numbers kinda tricky.  
-; 
-; I may end up pushing this down to the VM level and defining 
-; something like:
-; bit 0 set        -> pointer, 
-;                     object size is in bits 2-10 location in bits 11 to 31 
-; bit 1 set        -> language defined constant.  
-; bits 0 & 1 clear -> immediate integer value in bits 2-31
+; The top-level-env is a list containing the list of symbols 
+; defined by the compiler at the top level. It is very important
+; that the order of symbols in this list match the order defined 
+; in the assembly-preamble function way down below.  
 ;
-; The VM would do type checking on operations 
-; (LOAD, STORE, and ARITHMETIC), 
-; PUSH would take an immediate numeric argument (and shift left by two)
-; new instructions TOP, and TOC, and TOI would coerce between the types
+; The runtime environment is represented as a list of lists
+; references to symbols are replaced with a traversal of this structure
+; based on the level of enclosing scope where the symbol was defined, and
+; the index of the variable in that scope.  This is taken directly from the
+; SECD machine's representation of the environment. 
+;
+; For example suppose we have something like:
+;   (((lambda (x) 
+;        (lambda (z) (+ x z)))
+;        5)
+;      7)
+;
+; The inner lambda (that gets returned and applied to the arg 7) refers to three
+; different symbols:  '+' 'x' and 'z' that are each declared at a different depth
+; in the enclosing environment. 
+; When this lambda is evaluated (with the argument 7) the environment will look like:
+;   ((7)
+;    (5)
+;    ("=" "null?" "cons" "car" "cdr" "+" ...))
+;
+; So the reference to symbol 'z' will be compiled to (car (car env))
+;    the reference to symbol 'x' will be compiled to (car (car (cdr env))) and
+;    the reference to symbol '+' will be compiled to (car (cdr (cdr (cdr (cdr (car (cdr (cdr env))))))))
+;
+; Note: this isn't strictly accurate since the symbols 'car' and 'cdr' are themselves
+;       defined in the environment and would thus require lookups making this expansion
+;       impossible.  What really happens is that a non-closure form of the car and cdr 
+;       procedures are invoked directly.  See the functions u-call-* below.
+(define top-level-env '(("=" "null?" "cons" "car" "cdr" "+" "-" "*" "string->list"
+			 "print-char" "print-num" "string-length")))
 
-
-; these are runtime constants used for tracking
-; the heap and the environment
-
-(define top-level-env '(("=" "null?" "cons" "car" "cdr" "+" "-" "*" "string->list" "print-char" "print-num" "string-length")))
-
-; this is the compiler internal notion of what instruction
-; is currently being written
+; The compiler's internal notion of what instruction is currently being written
 (define instruction-pointer 0)
 (define increment-ip (lambda ()
   (set! instruction-pointer (+ 1 instruction-pointer))))
 
+; (fresh-label) is used to generate labels for each lambda 
+; expression and for string constants.  
 (define label-counter 0)
 (define fresh-label (lambda ()
 		      (set! label-counter (+ label-counter 1))
@@ -111,13 +133,10 @@
 	  (append-instruction (car inss))
 	  (append-instructions (cdr inss))))))
 
-(define assembly-increment (lambda ()
-		       (append-instructions 
-			(list "PUSH" (asm-number 1) "ADD"))))
 
 ; append assembly code for storing a value to the next free
 ; heap cell.
-; (val)  -> (hp*) , hp' = hp+1, heap[hp] = val
+; (val)  -> (hp) , hp' = hp+1, heap[hp] = val
 (define store-to-heap (lambda ()
 			(append-instructions
 			 (list "PUSH" (asm-number 1)   ; (thing 1)
@@ -127,12 +146,43 @@
 			       "PUSH" (asm-number 0)   ; (hp thing hp 0)
 			       "STOR"))))
 
+;
+; We're now actually into the guts of the compiler.  
+; The conventions are as follows:
+;   Functions of the form 
+;       - 'assembly-foo' take no arguments, append asm instructions
+;                        to the output stream for completing the task
+;                        foo, and return no useful result.
+;
+;       - 'u-call-foo'   serve as a wrapper around the assembly-foo
+;                        functions.  For larger blocks of assembly code
+;                        the u-call-foo insert a CALL to the definitions,
+;                        shorter ones are inlined.  Again, no useful result
+;                        is returned.
+;
+;       - 'compile-foo'  these are the main compiler functions.  All of 
+;                        these take atleast two arguments, the s-expression 
+;                        to compile and the symbolic environment list used
+;                        to resolve references.  Some of these take a boolean
+;                        'rest' argument which is a bad hack to support tail-call
+;                        optimization.  If 'rest' is false it means their is 
+;                        definitely no continuation to this expression and so
+;                        a closure invocation can be optimized by not storing the
+;                        return environment and using a JMP rather than a CALL
+;                        (see assembly-funcall vs. assembly-tailcall below).  
+;                        All compile-* functions must return either 0-arity function
+;                        or false.  The 0-arity function represents work that is 
+;                        being delayed until after the compilation of the main
+;                        program body, e.g., the body of lambda expressions.
+;                        It is vital that these return values be propagated out
+;                        to the main compiler loop 'do-compiler-task'
+
 			   
 ; assembly for the primitive list functions car, cdr, and cons
-; (ptr*) -> ((car ptr))
+; (ptr) -> ((car ptr))
 (define assembly-car  (lambda () (append-instructions (list "PUSH" (asm-number 0) "LOAD"))))
 
-; (ptr*) -> ((cdr ptr))
+; (ptr) -> ((cdr ptr))
 (define assembly-cdr  (lambda () (append-instructions (list "PUSH" (asm-number 1) "LOAD"))))
 
 
@@ -231,7 +281,11 @@
 ; returning is simple since cleanup is handled by the caller
 (define assembly-funret (lambda () (append-instruction "RET")))
 			   
-; assembly for loading a cell from the environment.
+; Assembly for loading a cell from the environment.
+; assembly-env-cell places the cons box whose car is 
+; at the desired offsets on the stack.  
+; assembly-env-val actually loads the value.  
+; The distinction is made for the purpose of set!
 (define assembly-env-cell-idx
   (lambda (idx)
     (if (= idx 0)
@@ -264,7 +318,8 @@
   (lambda ()
     (append-instructions (list "PUSH" "@__nil" ))))
 
-; Lookup functions,  find a particular atom in the environment
+; Lookup functions,  find a particular symbol in the symbolic environment
+; list. These are complimentary to the assembly-env-* functions above.
 (define lookup-reference-offset 
   (lambda (r e cont)
     (if (null? e) (cont #f)	
@@ -292,15 +347,13 @@
   (lambda (r e)
     (lookup-reference-depth r e (lambda (x) x))))
 
+; do-compile-task is the main compiler loop. 
+; it takes a 0-arity function to invoke (or false),
+; and recurs on the result of invoking the function.
 (define do-compile-task 
   (lambda (t) (if t (do-compile-task (t)) #f)))
 
 ; Compilation functions
-; These should all be written in explicit continuation passing form
-; to avoid excessive stack use when run on the bytecode interpreter
-; arguments are always: the form to be compiled, the environment in which
-; it would be executed, and the continuation to invoke on completion
-
 
 (define compile-number 
   (lambda (c env) (append-instructions (list "PUSH" (asm-number c))) #f))
@@ -308,7 +361,7 @@
 (define compile-string 
  (lambda (s env) 
    (let ((strlabel (fresh-label))
-	 (strlen (calculate-string-length s)))
+	 (strlen (- (string-length s) 2)))
      (append-instructions (list "PUSH" (string-append "@" strlabel)))
      (lambda ()         
        (append-instructions 
@@ -318,7 +371,20 @@
 	      s))
        #f))))
 
-; this doesn't handle escaped chars!
+(define compile-symbol
+  (lambda (s env)
+    (let ((symlabel (fresh-label))
+	  (strlen (calculate-symbol-length s)))
+      (append-instructions (list "PUSH" (string-append "@" symlabel)))
+      (lambda ()
+	(append-instructions 
+	 (list (string-append ":" (string-append symlabel (string-append "," (number->string (+ symlen 2)))))
+	       symbol-type-flag
+	       (asm-number symlen)
+	       (string-append "\"" (string-append s "\""))))
+	#f))))
+
+; this doesn't handle escaped chars except newline.
 (define compile-char
   (lambda (s env)
     (append-instructions 
@@ -326,7 +392,10 @@
 	   (string-append "'" 
 			  (string-append
 			   (if (string= s "#\\newline")
-			       "\\n" (string-substring s 2 3)) "'")))) #f))
+			       "\\n" 
+			       (if (string= s "#\\space")
+				   " "
+				   (string-substring s 2 3))) "'")))) #f))
 
 (define compile-reference 
   (lambda (r env)
@@ -335,6 +404,7 @@
 	  (assembly-env-val (car i) (cdr i))
 	  ; this is an error
 	  (begin
+	    ; this should really write to stderr.
 	    (display (string-append "Undefined symbol: " r))
 	    (exit))
 	  )
@@ -342,12 +412,12 @@
       )))
 
 (define compile-atom 
-  (lambda (x env) 
+  (lambda (x env quoted) 
     (if (string= x "#t")
 	(begin (append-instructions (list "PUSH" true-value)) #f)
 	(if (string= x "#f")
 	    (begin (append-instructions (list "PUSH" false-value)) #f)
-	    (if (is-number? x)
+	    (if (is-numeric? x)
 		(compile-number x env) 
 		(if (char=? (car (string->list x)) #\")
 		    (compile-string x env)
@@ -355,16 +425,15 @@
 			(compile-char x env)
 			(if (string=? "nil" x) 
 			    (begin (assembly-nil) #f)
-			    (compile-reference x env)))))))))
+			    (if quoted
+				(compile-symbol x env)
+				(compile-reference x env))))))))))
 
-; this is right, but breaks the normal continuation passing form 
-; of compile-* functions.
-;
+
 ; Hm, we should probably be flagging code pointers with something
-; so that we can avoid gc'ing them. Right now we just assume the 
+; so that we can avoid gc'ing them. Right now the VM just assumes the 
 ; code is statically defined below initial heap pointer but in order
-; to support eval we'll have to do something more clever.
-
+; to support eval we'll have to do something more clever later.
 (define compile-lambda 
   (lambda (l env rest)
     (let ((label (fresh-label)))
@@ -378,6 +447,39 @@
 	  r)	
 	)
       )))
+
+(define compile-let-bindings
+  (lambda (bs env)
+    (if (null? bs) 
+	(begin 
+	  (assembly-nil)
+	  #f)
+	(let ((r1 (compile-let-bindings (cdr bs) env))
+	      (r2 (compile-sexp (car (cdr (car bs))) env #t)))
+	  (u-call-cons)
+	  (lambda ()
+	    (do-compile-task r1)
+	    (do-compile-task r2))))))
+
+(define compile-let
+  (lambda (l env rest)
+    (let ((lbl (fresh-label))
+	  (r1 (compile-let-bindings (car (cdr l)) env))
+	  (e (map (lambda (x) (car x)) (car (cdr l)))))
+      (append-instructions (list "PUSH" (string-append "@" lbl) "RDRR"))
+      (u-call-cons)
+      (if rest
+	  (assembly-funcall)
+	  (assembly-tailcall))
+      (lambda ()
+	(do-compile-task r1)
+	(do-compile-task 
+	 (lambda ()
+	   (append-instruction (string-append ":" lbl))
+	   (let ((r (compile-sequence (cdr (cdr l)) (cons e env) rest)))
+	     (assembly-funret)
+	     r)))
+	))))
 
 (define compile-begin
   (lambda (l env rest) (compile-sequence (cdr l) env rest)))
@@ -394,8 +496,19 @@
 	      (do-compile-task r2)
 	      ))))))
 
-; this is right, except that it makes 
-; define not work quite the way it is supposed to.
+; define is only valid at the top-level scope.  
+; in real scheme define can be used in other places, but
+; we aren't really supporting that yet.
+;
+; define is really sneaky in that it has to modify
+; the environment (both symbolic and the non) so that
+; whatever symbol is being defined can be referenced in
+; lambda bodies that were declared previously (which is
+; part of why lambda body compilation is delayed until
+; after the main compilation).  We use set-car! modify
+; the symbolic top-level-env, and sneakily make use of
+; the "__top_level_env_tail" pointer to append the new 
+; definition to the end of the execution time environment.
 (define compile-define
   (lambda (l env rest)
     (let ((v (lookup-reference (car (cdr l)) env))
@@ -445,6 +558,26 @@
 	)
       )))
 
+(define compile-quoted-sexp
+  (lambda (s env)
+    (if (pair? s)
+	(let ((r1 (compile-quoted-sexp (cdr s) env))
+	      (r2 (compile-quoted-sexp (car s) env)))
+	  (u-call-cons)
+	  (lambda () 
+	    (do-compile-task r1) 
+	    (do-compile-task r2) 
+	    #f))
+	(if (null? s)
+	    (begin 
+	      (assembly-nil)
+	      #f)
+	    (compile-atom s env #t)))))
+
+(define compile-quote 
+  (lambda (s env rest)
+    (compile-quoted-sexp (car (cdr s)) env)))
+
 (define compile-arguments
   (lambda (l env)
     (if (null? l) 
@@ -459,7 +592,7 @@
 
 (define compile-list
   (lambda (l env rest)
-    (let ((s (find-builtin (car l) (builtin-forms))))
+    (let ((s (find-builtin (car l))))
       (if s 
 	  (s l env rest)
 	  (let ((r1 (compile-arguments (cdr l) env))
@@ -471,12 +604,12 @@
 	    (lambda ()
 	      (do-compile-task r1)
 	      (do-compile-task r2)))))))
-
+ 
 (define compile-sexp 
   (lambda (s env rest) 
     (if (list? s) 
 	(compile-list s env rest) 
-	(compile-atom s env))))
+	(compile-atom s env #f))))
 
 
 ; The builtin functions are a little peculiar.
@@ -731,7 +864,11 @@
        "WTRR")) ; set the initial env pointer
      ))
 
-
+; compiler-run is the entry point into the compilation system.
+; it reads a sexp, checks for EOF compiles the sexp, and then 
+; calls do-compile-task with a function that will call compiler-run
+; again and then return the delayed work.  If EOF is found, and END
+; instruction is written and the delayed work finally gets evaluated.
 (define compiler-run 
   (lambda (ch)
     (let ((sp (read-sexp ch)))
@@ -742,6 +879,16 @@
 	       (compiler-run (cdr sp)) r)))
 	  (append-instruction"END" )))))
 
+
+; Into the reader.  
+;
+; The reader is pretty simple.  
+; read-sexp calls either read-atom or read-list
+; read-atom reads an atom and returns a pair with the atom read, 
+; and the next character of the input stream.
+;
+; read-list reads sexps until the returned 'next-char' is a close peren, 
+; then returns the list read, and the next non-whitespace character.
 (define read-string-literal-helper 
   (lambda (escaped)
     (let ((x (read-char)))
@@ -792,5 +939,7 @@
 		    ))
   )
   
+; Dump the preamble
 (assembly-preamble)
+; then run the compiler.
 (compiler-run (next-non-ws))
