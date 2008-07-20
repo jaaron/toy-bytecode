@@ -1,3 +1,4 @@
+; Test of basic string handling functions
 (define print-string-list 
   (lambda (x)
     (if (null? x) nil

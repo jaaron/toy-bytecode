@@ -14,6 +14,17 @@
 		      (for-all? (lambda (x) (and (char>=? x #\0)  (char<=? x #\9)))
 				(string->list str))))
 
+(define calculate-string-list-length
+  (lambda (strl n)
+    (if (null? strl) n	
+	(calculate-string-list-length
+	 (if (char=? (car strl) #\\) (cdr (cdr strl)) (cdr strl))
+	 (+ n 1)))))
+
+(define calculate-string-length
+  (lambda (str)
+    (calculate-string-list-length (string->list str) -2)))
+
 ; The underlying VM uses a tagged memory model that differentiates between
 ; numbers, pointers, vm constants, and language constants. 
 ; Numeric values in the assembly must be tagged with an appropriate identifier
@@ -99,8 +110,8 @@
 ;       defined in the environment and would thus require lookups making this expansion
 ;       impossible.  What really happens is that a non-closure form of the car and cdr 
 ;       procedures are invoked directly.  See the functions u-call-* below.
-(define top-level-env '(("=" "null?" "cons" "car" "cdr" "+" "-" "*" "string->list"
-			 "print-char" "print-num" "string-length")))
+(define top-level-env (quote (("=" "null?" "cons" "car" "cdr" "+" "-" "*" "string->list"
+			       "print-char" "print-num" "string-length"))))
 
 ; The compiler's internal notion of what instruction is currently being written
 (define instruction-pointer 0)
@@ -128,7 +139,7 @@
 ; append a list of instructions to the output stream
 (define append-instructions 
   (lambda (inss)
-    (if (null? inss) '()
+    (if (null? inss) (quote ())
 	(begin
 	  (append-instruction (car inss))
 	  (append-instructions (cdr inss))))))
@@ -361,7 +372,7 @@
 (define compile-string 
  (lambda (s env) 
    (let ((strlabel (fresh-label))
-	 (strlen (- (string-length s) 2)))
+	 (strlen (calculate-string-length s)))
      (append-instructions (list "PUSH" (string-append "@" strlabel)))
      (lambda ()         
        (append-instructions 
@@ -894,22 +905,29 @@
     (let ((x (read-char)))
       (if (eof-object? x)
 	  (display "Error EOF reached while reading string constant\n")
-	  (if (and (not escaped) (char=? x #\")) (cons x '())
+	  (if (and (not escaped) (char=? x #\")) (cons x (quote ()))
 	      (cons x (read-string-literal-helper (char=? x #\\ ))))))))	
 
 (define read-string-literal
   (lambda ()
     (cons #\" (read-string-literal-helper #f))))
 
+(define read-comment
+  (lambda ()
+    (let ((x (read-char)))
+      (if (or (eof-object? x) (char=? x #\newline))
+	  #t
+	  (read-comment)))))
+	
 (define read-atom-helper (lambda (ch)
-  (if (or (eof-object? ch) (or (isspace ch) (char=? ch #\) )))
+  (if (or (eof-object? ch) (or (isspace ch) (or (char=? ch #\)) (char=? ch #\;) )))
       (cons #f ch)
       (if (char=? ch #\") 
 	  (cons (read-string-literal) (next-non-ws))
 	  (let ((x (read-atom-helper (read-char))))
 	    (cons (if (car x)
 		      (cons ch (car x))
-		      (cons ch '())) (cdr x)))))))
+		      (cons ch (quote ()))) (cdr x)))))))
   
 (define read-atom (lambda (ch) 
 		    (let ((x (read-atom-helper ch)))
@@ -920,7 +938,7 @@
 (define read-list 
   (lambda (atc)
     (if (char=? (cdr atc) #\) )
-	(cons (if (car atc) (cons (car atc) '()) '()) (next-non-ws) )
+	(cons (if (car atc) (cons (car atc) (quote ())) (quote ())) (next-non-ws) )
 	(let ((x (read-list (read-sexp (cdr atc)))))
 	  (cons 
 	   (if (car atc)
@@ -933,7 +951,11 @@
 			    (read-sexp (next-non-ws))
 			    (if (char=? ch #\( )
 				(read-list (read-sexp (next-non-ws)))
-				(read-atom ch))
+				(if (char=? ch #\;)
+				    (begin 
+				      (read-comment)
+				      (read-sexp (next-non-ws)))
+				    (read-atom ch)))
 			    )
 			(cons #f ch)
 		    ))
