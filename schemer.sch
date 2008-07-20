@@ -507,19 +507,16 @@
 	      (do-compile-task r2)
 	      ))))))
 
-; define is only valid at the top-level scope.  
-; in real scheme define can be used in other places, but
-; we aren't really supporting that yet.
-;
 ; define is really sneaky in that it has to modify
 ; the environment (both symbolic and the non) so that
 ; whatever symbol is being defined can be referenced in
 ; lambda bodies that were declared previously (which is
 ; part of why lambda body compilation is delayed until
-; after the main compilation).  We use set-car! modify
-; the symbolic top-level-env, and sneakily make use of
-; the "__top_level_env_tail" pointer to append the new 
-; definition to the end of the execution time environment.
+; after the main compilation). This involves using set-car!
+; to modify both environment pointers such that
+; (car post-env) == (cons v (car pre-env))
+; where v is the value of the defined symbol and pre-env and
+; post-env are the environments before and after the call.
 (define compile-define
   (lambda (l env rest)
     (let ((v (lookup-reference (car (cdr l)) env))
@@ -529,21 +526,13 @@
 	    (assembly-env-cell (car v) (cdr v))
 	    (u-call-set-car))
 	  (begin
-	    (set-car! top-level-env (append (car top-level-env) (list (car (cdr l)))))
-	    (assembly-nil)                               ; (v nil)
-	    (append-instruction "SWAP")                  ; (nil v)
-	    (u-call-cons)                                ; ((v . nil))	    
-	    (append-instructions
-	     (list "DUP"                                 ; ((v . nil) (v . nil))
-		   "PUSH" "@__top_level_env_tail"        ; ((v . nil) (v . nil) &tl)
-		   "PUSH" (asm-number 0)                 ; ((v . nil) (v . nil) &tl 0)
-		   "LOAD"))                              ; ((v . nil) (v . nil) (? . nil))
-	    (u-call-set-cdr)                             ; ((v . nil))  -- list updated to (? . (v . nil))
-	    (append-instructions
-	     (list "PUSH" "@__top_level_env_tail"        ; ((v . nil) &tl)
-		   "PUSH" (asm-number 0)                 ; ((v . nil) &tl 0)
-		   "STOR"                                ; () ; tl = v. nil
-	      ))))
+	    (set-car! top-level-env (cons (car (cdr l)) (car top-level-env)))
+	    (append-instruction "RDRR")                  ; (v env)
+	    (u-call-car)                                 ; (v (car env))
+	    (append-instruction "SWAP")                  ; ((car env) v)
+	    (u-call-cons)                                ; ((v . (car env)))
+	    (append-instruction "RDRR")                  ; ((v . (car env)) env)
+	    (u-call-set-car)))                           ; () ; env is updated
 	  r)))
 
 ; when we can detect application of a builtin
@@ -864,8 +853,6 @@
       ":__null_q_box,2"        "@null_q"        "@__cons_box"
       ":__equal_box,2"         "@equal"         "@__null_q_box"
       ":__initial_env,2"       "@__equal_box"   "@__nil"
-
-      ":__top_level_env_tail,1" "@__string_length_box"
       ))
      (define-builtin-functions)
      (append-instructions 
