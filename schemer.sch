@@ -1,8 +1,4 @@
-; reader utility functions
-(define isspace (lambda (c) (or (char=? c #\space ) (or (char=? c #\tab) (char=? c #\newline)))))
-(define next-non-ws (lambda () (lambda (z) (if (isspace z) (next-non-ws) z)) (read-char)))
-
-; other utility functions
+; utility functions
 (define for-all? (lambda (f l) (if (null? l) 
 				   #t
 				   (if (f (car l))
@@ -11,7 +7,7 @@
 ; check if a string represents a numeric constant.
 ; i.e., the string "123" is numeric
 (define is-numeric? (lambda (str)
-		      (for-all? (lambda (x) (and (char>=? x #\0)  (char<=? x #\9)))
+		      (for-all? is-number?
 				(string->list str))))
 
 (define calculate-string-list-length
@@ -406,7 +402,7 @@
 			       "\\n" 
 			       (if (string= s "#\\space")
 				   " "
-				   (string-substring s 2 3))) "'")))) #f))
+				   (substring s 2 3))) "'")))) #f))
 
 (define compile-reference 
   (lambda (r env)
@@ -424,7 +420,7 @@
 
 (define compile-atom 
   (lambda (x env quoted) 
-    (if (string= x "#t")
+    (if (string=? x "#t")
 	(begin (append-instructions (list "PUSH" true-value)) #f)
 	(if (string= x "#f")
 	    (begin (append-instructions (list "PUSH" false-value)) #f)
@@ -869,12 +865,13 @@
 ; instruction is written and the delayed work finally gets evaluated.
 (define compiler-run 
   (lambda (ch)
-    (let ((sp (read-sexp ch)))
-      (if (car sp)
+    (let ((sp (read-datum ch)))
+      (if sp
 	  (let ((r (compile-sexp (car sp) top-level-env #t)))
 	    (do-compile-task 
 	     (lambda () 
-	       (compiler-run (cdr sp)) r)))
+	       (compiler-run (cdr sp) ) 
+	       r)))
 	  (append-instruction"END" )))))
 
 
@@ -887,68 +884,135 @@
 ;
 ; read-list reads sexps until the returned 'next-char' is a close peren, 
 ; then returns the list read, and the next non-whitespace character.
-(define read-string-literal-helper 
-  (lambda (escaped)
-    (let ((x (read-char)))
-      (if (eof-object? x)
-	  (display "Error EOF reached while reading string constant\n")
-	  (if (and (not escaped) (char=? x #\")) (cons x (quote ()))
-	      (cons x (read-string-literal-helper (char=? x #\\ ))))))))	
+; reader utility functions
+(define is-space?     (lambda (c) (or (eof-object? c) (or (char=? c #\space ) (or (char=? c #\tab) (char=? c #\newline))))))
+(define is-delimiter? (lambda (c) (or (is-space? c) (or (char=? c #\() (or (char=? c #\)) (or (char=? c #\") (char=? c #\; )))))))
+(define is-number?    (lambda (c) (and (char>=? c #\0) (char<=? c #\9))))
+(define is-char-name? (lambda (s) (or (string=? s "newline") (or (string=? s "space") (string=? s "tab")))))
 
-(define read-string-literal
-  (lambda ()
-    (cons #\" (read-string-literal-helper #f))))
+(define drop-chars-until (lambda (f) (let ((x (read-char))) (if (f x) x             (drop-chars-until f)))))
+(define next-non-ws      (lambda ()  (drop-chars-until (lambda (z) (not (is-space? z))))))
 
-(define read-comment
+(define reader-state-hash-backslash 
+  (lambda (c)
+    (if (is-delimiter? c)
+	(cons (string-append "#\\" (make-string 1 c)) (read-char))
+	(let ((r (reader-state-wordhcar c)))
+	  (cons (string-append "#\\" (car r)) (cdr r))))))
+
+(define reader-state-hash
+  (lambda (c)
+    (if (char=? c #\\)
+	(reader-state-hash-backslash (read-char))
+	(if (char=? c #\t)
+	    (cons "#t" (read-char))
+	    (if (char=? c #\f)
+		(cons "#f" (read-char))
+		(begin
+		  (display "ERROR: Unrecognized # sequence\n")
+		  (quit)))))))
+
+(define reader-state-wordchar-helper
+  (lambda (c)
+    (if (or (eof-object? c) (is-delimiter? c) ) (cons '() c)
+	(let ((r (reader-state-wordchar-helper (read-char))))
+	  (cons (cons c (car r)) (cdr r))))))
+
+(define reader-state-wordchar
+  (lambda (c) (let ((r (reader-state-wordchar-helper c)))
+		 (cons (list->string (car r)) (cdr r)))))
+
+(define reader-state-semicolon 
+  (lambda (c) 
+    (if (eof-object? c) #f
+	(if (char=? c #\newline) 
+	    (reader-state-entrance (read-char))
+	    (reader-state-semicolon (read-char))))))
+
+(define reader-state-string-escaped
+  (lambda (c) 
+    (if (eof-object? c)
+	(begin
+	  (display "ERROR: EOF Encountered while scanning string\n")
+	  (quit))
+	(let ((r (reader-state-string-unescaped (read-char))))
+	  (cons (cons c (car r)) (cdr r))))))
+
+(define reader-state-string-unescaped
+  (lambda (c) 
+    (if (eof-object? c)
+	(begin
+	  (display "ERROR: EOF Encountered while scanning string\n")
+	  (quit))
+	(if (char=? #\" c) 
+	    (cons (cons c '()) (read-char))
+	    (let ((r (if (char=? #\\ c)
+			 (reader-state-string-escaped (read-char))
+			 (reader-state-string-unescaped (read-char)))))
+	      (cons (cons c (car r)) (cdr r)))))))
+	    
+
+(define reader-state-open-string
+  (lambda (c)
+    (let ((r (reader-state-string-unescaped c)))
+      (cons (list->string (cons #\" (car r))) (cdr r)))))
+
+(define reader-state-entrance
+  (lambda (c)
+    (if (eof-object? c)
+	#f
+	(if (is-space? c)
+	    (reader-state-entrance (read-char))
+	    (if (char=? c #\#)
+		(reader-state-hash (read-char))
+		(if (char=? c #\")
+		    (reader-state-open-string (read-char))
+		    (if (char=? c #\()
+			(cons "(" (read-char))
+			(if (char=? c #\))
+			    (cons ")" (read-char))				   
+			    (if (char=? c #\')
+				(cons "'" (read-char))
+				(if (char=? c #\;)
+				    (reader-state-semicolon (read-char))			     
+				    (reader-state-wordchar c)))))))))))
+
+(define look-ahead #f)
+(define next-token
   (lambda ()
-    (let ((x (read-char)))
-      (if (or (eof-object? x) (char=? x #\newline))
-	  #t
-	  (read-comment)))))
-	
-(define read-atom-helper (lambda (ch)
-  (if (or (eof-object? ch) (or (isspace ch) (or (char=? ch #\)) (char=? ch #\;) )))
-      (cons #f ch)
-      (if (char=? ch #\") 
-	  (cons (read-string-literal) (next-non-ws))
-	  (let ((x (read-atom-helper (read-char))))
-	    (cons (if (car x)
-		      (cons ch (car x))
-		      (cons ch (quote ()))) (cdr x)))))))
-  
-(define read-atom (lambda (ch) 
-		    (let ((x (read-atom-helper ch)))
-		      (if (car x) 
-			  (cons (list->string (car x)) (cdr x))
-			  x))))
+    (let ((z (if look-ahead
+		 (reader-state-entrance look-ahead)
+		 (reader-state-entrance (read-char)))))
+      (if z
+	  (begin
+	    (set! look-ahead (cdr z))
+	    (car z))
+	  z))))
+
+(define parse-token
+  (lambda (tok)
+    (if (string=? x "(")
+	(read-list)
+	(if (string=? x "'")
+	    (cons "quote" (cons (read-sexp) '()))
+	    x))))
 
 (define read-list 
-  (lambda (atc)
-    (if (char=? (cdr atc) #\) )
-	(cons (if (car atc) (cons (car atc) (quote ())) (quote ())) (next-non-ws) )
-	(let ((x (read-list (read-sexp (cdr atc)))))
-	  (cons 
-	   (if (car atc)
-	       (cons (car atc) (car x))
-	       (car x)) (cdr x))))))
+  (lambda ()
+    (let ((x (next-token)))
+      (if (not x)
+	(begin
+	  (display "ERRROR: EOF Encountered while reading list\n")
+	  (quit))  
+	(if (string=? x ")") '() (parse-token x))))))
 
-(define read-sexp (lambda (ch)
-		    (if (char? ch)
-			(if (isspace ch)
-			    (read-sexp (next-non-ws))
-			    (if (char=? ch #\( )
-				(read-list (read-sexp (next-non-ws)))
-				(if (char=? ch #\;)
-				    (begin 
-				      (read-comment)
-				      (read-sexp (next-non-ws)))
-				    (read-atom ch)))
-			    )
-			(cons #f ch)
-		    ))
-  )
-  
+
+(define read-sexp
+  (lambda () (parse-token (next-token))))
+
 ; Dump the preamble
-(assembly-preamble)
+;(assembly-preamble)
 ; then run the compiler.
-(compiler-run (next-non-ws))
+; (display (read-datum (next-non-ws-skip-comments)))
+; (newline)
+;(compiler-run (next-non-ws-skip-comments))
