@@ -109,7 +109,7 @@
 ;       defined in the environment and would thus require lookups making this expansion
 ;       impossible.  What really happens is that a non-closure form of the car and cdr 
 ;       procedures are invoked directly.  See the functions u-call-* below.
-(define top-level-env (quote (("=" "null?" "cons" "car" "cdr" "+" "-" "*" "%" "/" 
+(define top-level-env (quote (("=" "<" "null?" "cons" "car" "cdr" "+" "-" "*" "%" "/" 
 			       "string->list"
 			       "print-char" "print-num" "string-length" 
 			       "string?" "number?" "char?" "pair?"
@@ -742,6 +742,14 @@
     (append-instruction "EQ")
     (assembly-funret)
 
+    ; less than comparison
+    (append-instructions
+     (list ":less_than,2" "@__initial_env" "@__less_than" ":__less_than"))
+    (assembly-env-val 0 0)
+    (assembly-env-val 0 1)
+    (append-instruction "LT")
+    (assembly-funret)
+    
     ; questions
     (append-instructions
      (list ":null_q,2" "@__initial_env" "@__null_q" ":__null_q"))
@@ -953,7 +961,8 @@
       ":__car_box,2"           "@car"           "@__cdr_box"
       ":__cons_box,2"          "@cons"          "@__car_box"
       ":__null_q_box,2"        "@null_q"        "@__cons_box"
-      ":__equal_box,2"         "@equal"         "@__null_q_box"
+      ":__less_than_box,2"     "@less_than"     "@__null_q_box"
+      ":__equal_box,2"         "@equal"         "@__less_than_box"
       ; actual initial env definition
       ":__initial_env,2"       "@__equal_box"   "@__nil"
       ))

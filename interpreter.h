@@ -1,4 +1,4 @@
-#define MEM_SIZE   4096
+#define MEM_SIZE   8192
 #define STACK_SIZE 256
 
 #define NUM    0x0

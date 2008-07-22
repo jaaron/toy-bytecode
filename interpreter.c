@@ -42,8 +42,6 @@
   }while(0)
 #define STACK_HEIGHT() ((memory + MEM_SIZE-1) - sp)
 
-#define MEM_SIZE 4096
-
 #define DO_DUMP(stream) do{						\
     int q=0;								\
     fprintf(stream, "pc: %d, hp: %d sp: %p height: %d\nstack:\n",	\
