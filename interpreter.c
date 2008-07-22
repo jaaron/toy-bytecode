@@ -377,8 +377,10 @@ int main(int argc, char *argv[])
     
     /* Arithmetic */
     (long)&&PLUS, (long)&&MUL, 
-    (long)&&SHL,  (long)&&SHR, 
-    (long)&&BOR,  (long)&&BAND,
+    (long)&&SUB,  (long)&&DIV,
+    (long)&&MOD,  (long)&&SHL,  
+    (long)&&SHR,  (long)&&BOR,  
+    (long)&&BAND,
     
     /* Comparison */
     (long)&&EQ,   (long)&&LT,
@@ -474,6 +476,7 @@ int main(int argc, char *argv[])
 		STACK_POP();
 	      }while(0)
 	      );
+
   INSTRUCTION(END, 
 #ifdef __STATS__
 	      fprintf(stderr, "max_alloc = %d\n", max_alloc);
@@ -481,18 +484,34 @@ int main(int argc, char *argv[])
 	      return 0);
 
   /* arithmetic */
-  INSTRUCTION(PLUS,
+  INSTRUCTION(PLUS, 
 	      ASSERT_TYPE(STACK(0), NUM);
 	      ASSERT_TYPE(STACK(1), NUM);
 	      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) +  NUM_TO_NATIVE(STACK(0)));
-	      STACK_POP();
-	      );
+	      STACK_POP());
     
-  INSTRUCTION(MUL, do{
-      ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);
-      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) * NUM_TO_NATIVE(STACK(0))); 
-      STACK_POP();
-    }while(0));
+  INSTRUCTION(MUL,
+	      ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);
+	      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) * NUM_TO_NATIVE(STACK(0))); 
+	      STACK_POP());
+
+  INSTRUCTION(SUB, 
+	      ASSERT_TYPE(STACK(0), NUM);
+	      ASSERT_TYPE(STACK(1), NUM);
+	      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) -  NUM_TO_NATIVE(STACK(0)));
+	      STACK_POP());
+
+  INSTRUCTION(DIV, 
+	      ASSERT_TYPE(STACK(0), NUM);
+	      ASSERT_TYPE(STACK(1), NUM);
+	      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) / NUM_TO_NATIVE(STACK(0)));
+	      STACK_POP());
+
+  INSTRUCTION(MOD, 
+	      ASSERT_TYPE(STACK(0), NUM);
+	      ASSERT_TYPE(STACK(1), NUM);
+	      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) %  NUM_TO_NATIVE(STACK(0)));
+	      STACK_POP());
 
   INSTRUCTION(SHL, do{
       ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);

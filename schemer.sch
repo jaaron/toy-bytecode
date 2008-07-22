@@ -7,8 +7,11 @@
 ; check if a string represents a numeric constant.
 ; i.e., the string "123" is numeric
 (define is-numeric? (lambda (str)
-		      (for-all? is-number?
-				(string->list str))))
+		      (let ((r (string->list str)))
+			(if (null? r) #f
+			    (if (or (char=? (car r) #\-) (char=? (car r) #\+))
+				(if (null? (cdr r)) #f (for-all? is-number? (cdr r)))
+				(for-all? is-number? r))))))
 
 (define calculate-string-list-length
   (lambda (strl n)
@@ -36,8 +39,8 @@
 (define asm-lang-const (lambda (x) (string-append "l" (if (number? x) (number->string x) x))))
 
 ; Language constants
-(define false-value  "TRUE")
-(define true-value   "FALSE")
+(define false-value  "FALSE")
+(define true-value   "TRUE")
 (define string-type-flag (asm-lang-const 2))
 (define symbol-type-flag (asm-lang-const 3))
 
@@ -66,7 +69,7 @@
   (lambda (f ss)
     (if (null? ss) #f
 	(if (and (string? f) 
-		 (string= f (car (car ss))))
+		 (string=? f (car (car ss))))
 	    (cdr (car ss))
 	    (find-builtin-helper f (cdr ss))))))
     
@@ -106,8 +109,18 @@
 ;       defined in the environment and would thus require lookups making this expansion
 ;       impossible.  What really happens is that a non-closure form of the car and cdr 
 ;       procedures are invoked directly.  See the functions u-call-* below.
-(define top-level-env (quote (("=" "null?" "cons" "car" "cdr" "+" "-" "*" "string->list"
-			       "print-char" "print-num" "string-length"))))
+(define top-level-env (quote (("=" "null?" "cons" "car" "cdr" "+" "-" "*" "%" "/" 
+			       "string->list"
+			       "print-char" "print-num" "string-length" 
+			       "string?" "number?" "char?" "pair?"
+			       "read-char" "list" "quit"
+			       ; these aren't defined yet!
+			       "and" "or"                                            ; boolean operators 
+			       "string=?" "char=?" "char<=?" "char>=?" "eof-object?" ; comparison functions 
+			       "list->string"                                        ; list functions			       
+			       "string-append" "substring" "make-string"             ; string functions 
+			       "set!" "set-car!" "set-cdr!"                          ; modifiers
+			       ))))
 
 ; The compiler's internal notion of what instruction is currently being written
 (define instruction-pointer 0)
@@ -330,7 +343,7 @@
 (define lookup-reference-offset 
   (lambda (r e cont)
     (if (null? e) (cont #f)	
-	(if (string= r (car e))
+	(if (string=? r (car e))
 	    (cont 0)
 	    (lookup-reference-offset r (cdr e)
 				     (lambda (z) 
@@ -378,10 +391,13 @@
 	      s))
        #f))))
 
+(define calculate-symbol-length 
+  (lambda (s) 0))
+
 (define compile-symbol
   (lambda (s env)
     (let ((symlabel (fresh-label))
-	  (strlen (calculate-symbol-length s)))
+	  (symlen (calculate-symbol-length s)))
       (append-instructions (list "PUSH" (string-append "@" symlabel)))
       (lambda ()
 	(append-instructions 
@@ -398,9 +414,9 @@
      (list "PUSH" 	   
 	   (string-append "'" 
 			  (string-append
-			   (if (string= s "#\\newline")
+			   (if (string=? s "#\\newline")
 			       "\\n" 
-			       (if (string= s "#\\space")
+			       (if (string=? s "#\\space")
 				   " "
 				   (substring s 2 3))) "'")))) #f))
 
@@ -413,7 +429,7 @@
 	  (begin
 	    ; this should really write to stderr.
 	    (display (string-append "Undefined symbol: " r))
-	    (exit))
+	    (quit))
 	  )
       #f
       )))
@@ -422,7 +438,7 @@
   (lambda (x env quoted) 
     (if (string=? x "#t")
 	(begin (append-instructions (list "PUSH" true-value)) #f)
-	(if (string= x "#f")
+	(if (string=? x "#f")
 	    (begin (append-instructions (list "PUSH" false-value)) #f)
 	    (if (is-numeric? x)
 		(compile-number x env) 
@@ -496,7 +512,9 @@
     (if (null? l) #f
 	(let ((r1 (compile-sexp (car l) env (if (null? (cdr l)) rest #t) )))
 	  (if (not (null? (cdr l)))
-	      (append-instruction "POP"))
+	      (append-instruction "POP") 
+	      #f
+	      )
 	  (let ((r2 (compile-sequence (cdr l) env rest)))
 	    (lambda ()
 	      (do-compile-task r1)
@@ -535,24 +553,35 @@
 ; we can avoid function call overhead and just inline the assembly
 (define compile-if
   (lambda (l env rest)
-    (let ((true-label (fresh-label))
-	  (join-label (fresh-label)))
-      (let ((r1 (compile-sexp (car (cdr l)) env #t))
-	    (x  (append-instructions 
-		 (list "PUSH" (string-append "@" true-label)
-		       "JTRUE")))
-	    (r2 (compile-sexp (car (cdr (cdr (cdr l)))) env rest))
-	    (y  (append-instructions (list "PUSH" (string-append "@" join-label) "JMP"
-					   (string-append ":" true-label))))
-	    (r3 (compile-sexp (car (cdr (cdr l))) env rest)))
-	(append-instruction (string-append ":" join-label))
-	(lambda ()
-	  (do-compile-task r1)
-	  (do-compile-task r2)
-	  (do-compile-task r3)
-	  )
-	)
-      )))
+    (if (not (= (length l) 4)) 
+	(begin 
+	  (display "Error in compile-if wrong number of arguments\n\t")
+	  (display l)
+	  (newline)
+	  (quit))
+	(let ((false-label (fresh-label))
+	      (join-label (fresh-label))
+	      (conditional (car (cdr l)))
+	      (true-case  (car (cdr (cdr l))))
+	      (false-case (car (cdr (cdr (cdr l))))))
+	  (let ((r1 (compile-sexp conditional env #t))
+		(x  (append-instructions 
+		     (list "PUSH" false-value
+			   "EQ"
+			   "PUSH" (string-append "@" false-label)
+			   "JTRUE")))
+		(r2 (compile-sexp true-case env rest))
+		(y  (append-instructions (list "PUSH" (string-append "@" join-label) "JMP"
+					       (string-append ":" false-label))))
+		(r3 (compile-sexp false-case env rest)))
+	    (append-instruction (string-append ":" join-label))
+	    (lambda ()
+	      (do-compile-task r1)
+	      (do-compile-task r2)
+	      (do-compile-task r3)
+	      )
+	    )
+	  ))))
 
 (define compile-quoted-sexp
   (lambda (s env)
@@ -677,13 +706,11 @@
     (append-instruction "ADD")
     (assembly-funret)
 
-    ; the vm doesn't actually define subtraction, 
-    ; we multiply by -1 and add.
     (append-instructions
      (list ":subtract,2" "@__initial_env" "@__subtract :__subtract"))
     (assembly-env-val 0 0)
     (assembly-env-val 0 1)    
-    (append-instructions (list "PUSH" (asm-number -1) "MUL" "ADD"))
+    (append-instruction "SUB")
     (assembly-funret)
 
     (append-instructions
@@ -693,6 +720,21 @@
     (append-instruction "MUL")
     (assembly-funret)
 
+    (append-instructions 
+     (list ":divide,2" "@__initial_env" "@__divide" ":__divide"))
+    (assembly-env-val 0 0)
+    (assembly-env-val 0 1)
+    (append-instruction "DIV")
+    (assembly-funret)
+
+    (append-instructions 
+     (list ":modulo,2" "@__initial_env" "@__modulo" ":__modulo"))
+    (assembly-env-val 0 0)
+    (assembly-env-val 0 1)
+    (append-instruction "MOD")
+    (assembly-funret)
+
+    ; equality comparison
     (append-instructions
      (list ":equal,2" "@__initial_env" "@__equal" ":__equal"))
     (assembly-env-val 0 0)
@@ -708,6 +750,18 @@
     (append-instruction "EQ")
     (assembly-funret)
 
+    (append-instructions
+     (list ":char_q,2" "@__initial_env" "@__char_q" ":__char_q"))
+    (assembly-env-val 0 0)
+    (append-instruction "ISCHR")
+    (assembly-funret)
+
+    (append-instructions
+     (list ":number_q,2" "@__initial_env" "@__number_q" ":__number_q"))
+    (assembly-env-val 0 0)
+    (append-instruction "ISNUM")
+    (assembly-funret)
+
     (append-instructions 
      (list ":string_q,2" "@__initial_env" "@__string_q" ":__string_q"))
     (assembly-env-val 0 0)
@@ -715,7 +769,6 @@
      (list "DUP" 
 	   "ISPTR"
 	   "PUSH" "@__string_q_is_ptr"
-	   "EQ"
 	   "JTRUE" 
 	   "POP"
 	   "PUSH" "FALSE"))
@@ -738,6 +791,49 @@
      (list ":print_char,2" "@__initial_env" "@__print_char" ":__print_char"))
     (assembly-env-val 0 0)
     (append-instructions (list "DUP" "PCHR"))
+    (assembly-funret)
+
+    (append-instructions
+     (list ":read_char,2" "@__initial_env" "@__read_char" ":__read_char"))
+    (append-instruction "GETC")
+    (assembly-funret)
+
+    (append-instructions
+     (list ":quit,2" "@__initial_env" "@__quit" ":__quit"))
+    (append-instruction "END")
+
+    (append-instructions
+     (list ":pair_q,2" "@__initial_env" "@__pair" ":__pair"))
+    (assembly-env-val 0 0)
+    (append-instructions 
+     (list "DUP"
+	   "ISPTR"
+	   "PUSH" "@__pair_q_isptr" 
+	   "JTRUE"
+	   "POP"
+	   "PUSH" false-value))
+    (assembly-funret)
+    ; this isn't the greatest heuristic,
+    ; but at this point if the target of a 
+    ; pointer is not a language constant,
+    ; then the pointer points to a cons box.
+    (append-instructions
+     (list ":__pair_q_isptr"
+	   "PUSH" (asm-number 0)
+	   "LOAD"
+	   "ISLCONST"
+	   "PUSH" "@__pair_q_islconst"
+	   "PUSH" true-value))
+    (assembly-funret)
+    (append-instructions 
+     (list ":__pair_q_islconst" "PUSH" false-value))
+    (assembly-funret)
+	   
+    ; list is sneaky and takes advantage of the fact
+    ; that the arguments are passed in as a list.
+    (append-instructions
+     (list ":list,2" "@__initial_env" "@__list" ":__list"))
+    (assembly-env-cell 0 0)
     (assembly-funret)
 
     ; getting the length of a string is easy
@@ -831,16 +927,26 @@
      (list 
       ; initial trampoline past the definition of nil
       "PUSH" "@__main" "JMP"
-      ; here's the definition of nil (we're at address
-      ; 3 at the moment so 0x10000003 is @__nil & ptr-flag).
-      ; note that these will all break if the object representation
-      ; changes.
+      ; definition of null/nil
       ":__nil,2"               "@__nil"         "@__nil"
-      ":__string_length_box,2" "@string_length" "@__nil"
+      ; This is the definition of the initial environment.
+      ; each row here defines a cons box where the car
+      ; is the closure cell for the builtin function, and 
+      ; the cdr is the previous row (or nil)
+      ":__quit_box"            "@quit"          "@__nil"
+      ":__list_box"            "@list"          "@__quit_box"
+      ":__read_char_box"       "@read_char"     "@__list_box"
+      ":__pair_q_box"          "@pair_q"        "@__read_char_box"
+      ":__char_q_box,2"        "@char_q"        "@__pair_q_box"
+      ":__number_q_box,2"      "@number_q"      "@__char_q_box"
+      ":__string_q_box,2"      "@string_q"      "@__number_q_box"
+      ":__string_length_box,2" "@string_length" "@__string_q_box"
       ":__print_num_box,2"     "@print_num"     "@__string_length_box"
       ":__print_char_box,2"    "@print_char"    "@__print_num_box"
       ":__string_list_box,2"   "@string_list"   "@__print_char_box"
-      ":__multiply_box,2"      "@multiply"      "@__string_list_box"
+      ":__divide_box,2"        "@divide"        "@__string_list_box"
+      ":__modulo_box,2"        "@modulo"        "@__divide_box"
+      ":__multiply_box,2"      "@multiply"      "@__modulo_box"
       ":__subtract_box,2"      "@subtract"      "@__multiply_box"
       ":__add_box,2"           "@add"           "@__subtract_box"
       ":__cdr_box,2"           "@cdr"           "@__add_box"
@@ -848,6 +954,7 @@
       ":__cons_box,2"          "@cons"          "@__car_box"
       ":__null_q_box,2"        "@null_q"        "@__cons_box"
       ":__equal_box,2"         "@equal"         "@__null_q_box"
+      ; actual initial env definition
       ":__initial_env,2"       "@__equal_box"   "@__nil"
       ))
      (define-builtin-functions)
@@ -864,13 +971,13 @@
 ; again and then return the delayed work.  If EOF is found, and END
 ; instruction is written and the delayed work finally gets evaluated.
 (define compiler-run 
-  (lambda (ch)
-    (let ((sp (read-datum ch)))
+  (lambda ()
+    (let ((sp (read-sexp)))
       (if sp
-	  (let ((r (compile-sexp (car sp) top-level-env #t)))
+	  (let ((r (compile-sexp sp top-level-env #t)))
 	    (do-compile-task 
 	     (lambda () 
-	       (compiler-run (cdr sp) ) 
+	       (compiler-run) 
 	       r)))
 	  (append-instruction"END" )))))
 
@@ -885,19 +992,19 @@
 ; read-list reads sexps until the returned 'next-char' is a close peren, 
 ; then returns the list read, and the next non-whitespace character.
 ; reader utility functions
-(define is-space?     (lambda (c) (or (eof-object? c) (or (char=? c #\space ) (or (char=? c #\tab) (char=? c #\newline))))))
+(define is-space?     (lambda (c) (or (eof-object? c) (char=? c #\space ) (char=? c #\tab) (char=? c #\newline))))
 (define is-delimiter? (lambda (c) (or (is-space? c) (or (char=? c #\() (or (char=? c #\)) (or (char=? c #\") (char=? c #\; )))))))
 (define is-number?    (lambda (c) (and (char>=? c #\0) (char<=? c #\9))))
 (define is-char-name? (lambda (s) (or (string=? s "newline") (or (string=? s "space") (string=? s "tab")))))
 
-(define drop-chars-until (lambda (f) (let ((x (read-char))) (if (f x) x             (drop-chars-until f)))))
+(define drop-chars-until (lambda (f) (let ((x (read-char))) (if (f x) x (drop-chars-until f)))))
 (define next-non-ws      (lambda ()  (drop-chars-until (lambda (z) (not (is-space? z))))))
 
 (define reader-state-hash-backslash 
   (lambda (c)
     (if (is-delimiter? c)
 	(cons (string-append "#\\" (make-string 1 c)) (read-char))
-	(let ((r (reader-state-wordhcar c)))
+	(let ((r (reader-state-wordchar c)))
 	  (cons (string-append "#\\" (car r)) (cdr r))))))
 
 (define reader-state-hash
@@ -991,11 +1098,12 @@
 
 (define parse-token
   (lambda (tok)
-    (if (string=? x "(")
-	(read-list)
-	(if (string=? x "'")
-	    (cons "quote" (cons (read-sexp) '()))
-	    x))))
+    (if tok
+	(if (string=? tok "(")
+	    (read-list)
+	    (if (string=? tok "'")
+		(cons "quote" (cons (read-sexp) '()))
+		tok)) #f)))
 
 (define read-list 
   (lambda ()
@@ -1004,15 +1112,15 @@
 	(begin
 	  (display "ERRROR: EOF Encountered while reading list\n")
 	  (quit))  
-	(if (string=? x ")") '() (parse-token x))))))
+	(if (string=? x ")") '() (cons (parse-token x) (read-list)))))))
 
 
 (define read-sexp
   (lambda () (parse-token (next-token))))
 
 ; Dump the preamble
-;(assembly-preamble)
+(assembly-preamble)
 ; then run the compiler.
 ; (display (read-datum (next-non-ws-skip-comments)))
 ; (newline)
-;(compiler-run (next-non-ws-skip-comments))
+(compiler-run)

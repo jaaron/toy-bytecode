@@ -31,42 +31,45 @@
 /* Arithmetic */
 #define I_ADD   INS(10)
 #define I_MUL   INS(11)
-#define I_SHL   INS(12)
-#define I_SHR   INS(13)
-#define I_BOR   INS(14)
-#define I_BAND  INS(15)
+#define I_SUB   INS(12)
+#define I_DIV   INS(13)
+#define I_MOD   INS(14)
+#define I_SHL   INS(15)
+#define I_SHR   INS(16)
+#define I_BOR   INS(17)
+#define I_BAND  INS(18)
 
 /* Comparison */
 /* EQ is applicable to all types,  
    LT and GT cause type errors if both STACK(0) and STACK(1) are
    non numeric */
-#define I_EQ    INS(16)
-#define I_LT    INS(17)
+#define I_EQ    INS(19)
+#define I_LT    INS(20)
 
 /* Reading and writing memory */
-#define I_STOR  INS(18)  /* target address is top, then value */
-#define I_LOAD  INS(19)
-#define I_ALOC  INS(20)
+#define I_STOR  INS(21)  /* target address is top, then value */
+#define I_LOAD  INS(22)
+#define I_ALOC  INS(23)
 
 /* I/O operations */
-#define I_GETC  INS(21)
-#define I_DUMP  INS(22)
-#define I_PINT  INS(23)
-#define I_PCHR  INS(24)
+#define I_GETC  INS(24)
+#define I_DUMP  INS(25)
+#define I_PINT  INS(26)
+#define I_PCHR  INS(27)
 
 /* Root register manipulation */
-#define I_RDRR  INS(25)
-#define I_WTRR  INS(26)
+#define I_RDRR  INS(28)
+#define I_WTRR  INS(29)
 
 /* Type checking instructions */
-#define I_ISNUM    INS(27)
-#define I_ISLCONST INS(28)
-#define I_ISPTR    INS(29)
-#define I_ISBOOL   INS(30)
-#define I_ISCHR    INS(31)
-#define I_ISINS    INS(32)
+#define I_ISNUM    INS(30)
+#define I_ISLCONST INS(31)
+#define I_ISPTR    INS(32)
+#define I_ISBOOL   INS(33)
+#define I_ISCHR    INS(34)
+#define I_ISINS    INS(35)
 
-#define NR_INS 33
+#define NR_INS 36
 
 /* End instructions */
 

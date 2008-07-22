@@ -127,6 +127,9 @@ JTRUE    {out_buffer[words++] = PACK_VM_CONST(I_JTRUE); }
 END      {out_buffer[words++] = PACK_VM_CONST(I_END); }
 ADD      {out_buffer[words++] = PACK_VM_CONST(I_ADD); }
 MUL      {out_buffer[words++] = PACK_VM_CONST(I_MUL); }
+SUB      {out_buffer[words++] = PACK_VM_CONST(I_SUB); }
+DIV      {out_buffer[words++] = PACK_VM_CONST(I_DIV); }
+MOD      {out_buffer[words++] = PACK_VM_CONST(I_MOD); }
 SHL      {out_buffer[words++] = PACK_VM_CONST(I_SHL); }
 SHR      {out_buffer[words++] = PACK_VM_CONST(I_SHR); }
 BOR      {out_buffer[words++] = PACK_VM_CONST(I_BOR); }
@@ -224,13 +227,7 @@ int main(int argc, char *argv[])
     exit(1);
   }
   yylex();
-/*
-  if(words > 1024){
-    fprintf(stderr, "Warning: Program is more than 1024 words.  "
-	    "Interpreter may fail\n");
-    failure = 1;
-  }
-*/
+
   for(i=0;i<nr_unresolved;i++){
     if(unresolved_labels[i].txt != NULL){
       fprintf(stderr, "Unresolved reference to label: \"%s\" at offset %d\n",

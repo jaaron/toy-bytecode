@@ -1,7 +1,7 @@
 ; Test of basic string handling functions
 (define print-string-list 
   (lambda (x)
-    (if (null? x) nil
+    (if (null? x) '()
 	(begin
 	  (print-char (car x))
 	  (print-string-list (cdr x))))))
@@ -12,3 +12,8 @@
 (print-string "The string \"Hello world\\n\" is ")
 (print-num (string-length "Hello world\n"))
 (print-string " characters long.\n")
+
+(if (string? 5)
+    (print-string "5 is a string")
+    (print-string "5 is not a string"))
+(print-char #\newline)
