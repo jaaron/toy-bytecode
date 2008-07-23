@@ -114,12 +114,13 @@
 			       "print-char" "print-num" "string-length" 
 			       "string?" "number?" "char?" "pair?"
 			       "read-char" "list" "quit"
+			       "set-car!" "set-cdr!"
 			       ; these aren't defined yet!
 			       "and" "or"                                            ; boolean operators 
 			       "string=?" "char=?" "char<=?" "char>=?" "eof-object?" ; comparison functions 
 			       "list->string"                                        ; list functions			       
 			       "string-append" "substring" "make-string"             ; string functions 
-			       "set!" "set-car!" "set-cdr!"                          ; modifiers
+			       "set!"                                                ; modifiers
 			       ))))
 
 ; The compiler's internal notion of what instruction is currently being written
@@ -215,9 +216,8 @@
 			       "ROT"                 ; (cdr hp car hp)
 			       "PUSH" (asm-number 0) ; (cdr hp car hp 0)
 			       "STOR"                ; (cdr hp) car stored
-			       "DUP"))               ; (cdr hp hp)
-			(append-instructions
-			 (list "ROT"                 ; (hp cdr hp)
+			       "DUP"                 ; (cdr hp hp)
+			       "ROT"                 ; (hp cdr hp)
 			       "PUSH" (asm-number 1) ; (hp cdr hp 1)
 			       "STOR"))              ; (hp)  cdr stored
 			))
@@ -233,14 +233,12 @@
 ; part of larger compiler generated sequences (e.g., function application)
 ; for car, we just inline the assembly.  For cdr and cons we do a machine level
 ; call into a function.
-(define u-call-car  (lambda () (assembly-car))) ; car is 4 instructions, calling it is three
-					        ; the performance benefit of inlining calls outweighs
-					        ; the space savings.
+(define u-call-car  (lambda () (assembly-car))) ; car is 3 instructions, a function call is the same length
+					        ; so there is no reason not to inline it.
 
-(define u-call-cdr  ; cdr is 7 instructions,  it's probably worth not inlining it
-  (lambda () (append-instructions (list "PUSH" "@__u_cdr" "CALL"))))
+(define u-call-cdr  (lambda () (assembly-cdr))) ; same with cdr.
 
-(define u-call-cons ; cons is really big (24 instructions)! we'll never inline it
+(define u-call-cons ; cons is really big (13 instructions)! we'll never inline it
   (lambda () (append-instructions (list "PUSH" "@__u_cons" "CALL"))))
 
 (define u-call-set-car (lambda () (assembly-set-car)))
@@ -306,28 +304,19 @@
 ; at the desired offsets on the stack.  
 ; assembly-env-val actually loads the value.  
 ; The distinction is made for the purpose of set!
-(define assembly-env-cell-idx
-  (lambda (idx)
-    (if (= idx 0)
-	#t
-	(begin
-	  (u-call-cdr)
-	  (assembly-env-cell-idx (- idx 1))))))
-
-(define assembly-env-cell-helper
-  (lambda (depth idx)
-    (if (= depth 0)
-	(begin
-	  (u-call-car)
-	  (assembly-env-cell-idx idx))
-	(begin
-	  (u-call-cdr)
-	  (assembly-env-cell-helper (- depth 1) idx)))))
-
 (define assembly-env-cell
   (lambda (depth idx)
-    (append-instruction "RDRR")
-    (assembly-env-cell-helper depth idx)))
+    (append-instructions 
+     (list "RDRR"                     ; (env)
+	   "PUSH" (asm-number depth)  ; (env d)
+	   "PUSH" "@__u_nth_cell"     ; (env d u_nth)
+	   "CALL"))
+    (u-call-car)                      ; ((nth env depth))
+    (append-instructions
+     (list "PUSH" (asm-number idx)    ; ((nth env depth) idx)
+	   "PUSH" "@__u_nth_cell"     ; ((nth env depth) idx u_nth)
+	   "CALL"                     ; ((nth (nth env depth) idx))
+    ))))
 
 (define assembly-env-val 
   (lambda (depth idx)
@@ -650,6 +639,28 @@
 ;
 (define define-builtin-functions
   (lambda ()
+    (append-instructions
+     (list ":__u_nth_cell"              ; (l n r)
+	   "ROT"                        ; (r l n)
+	   ":__u_nth_cell_loop"
+	   "DUP"                        ; (r l n n)
+	   "PUSH" (asm-number 0)        ; (r l n n 0)
+	   "EQ"                         ; (r l n (= n 0))
+	   "PUSH" "@__u_nth_cell_done"  ; (r l n (= n 0) u_nth_cell_done)
+	   "JTRUE"                      ; (r l n)
+	   "PUSH" (asm-number -1)       ; (r l n -1)
+	   "ADD"                        ; (r l (- n 1))
+	   "SWAP"))                     ; (r (- n 1) l)
+    (u-call-cdr)                        ; (r (- n 1) (cdr l))
+    (append-instructions 
+     (list "SWAP"                       ; (r (cdr l) (- n 1))
+	   "PUSH" "@__u_nth_cell_loop"  ; (r (cdr l) (- n 1) u_nth_cell_loop)
+	   "JMP"
+	   ":__u_nth_cell_done"         ; (r l 0)
+	   "POP"))                      ; (r l)
+    (append-instruction "RET")
+    
+
     (append-instructions     
      (list ":cons,2" "@__initial_env" "@__cons" ; this is the closure cell
 	   ":__u_cons"                  ; this is the internal entry point
@@ -686,11 +697,6 @@
 
     (append-instructions                ; this is completely analogous to above
      (list ":cdr,2" "@__initial_env" "@__cdr" 
-	   ":__u_cdr"
-	   
-	   "SWAP"
-	   "PUSH" "@__cdr_body"
-	   "JMP"
 	   ":__cdr"))
     (assembly-env-val 0 0)
     (append-instruction ":__cdr_body")
@@ -750,6 +756,22 @@
     (append-instruction "LT")
     (assembly-funret)
     
+    ; assignments
+    (append-instructions
+     (list ":set_car,2" "@__initial_env" "@__set_car" ":__set_car"))
+    (assembly-env-val 0 1)
+    (assembly-env-val 0 0)
+    (u-call-set-car)
+    (assembly-funret)
+    
+    (append-instructions
+     (list ":set_cdr,2" "@__initial_env" "@__set_cdr" ":__set_cdr"))
+    (assembly-env-val 0 1)
+    (assembly-env-val 0 0)
+    (u-call-set-cdr)
+    (assembly-funret)
+
+
     ; questions
     (append-instructions
      (list ":null_q,2" "@__initial_env" "@__null_q" ":__null_q"))
@@ -941,7 +963,9 @@
       ; each row here defines a cons box where the car
       ; is the closure cell for the builtin function, and 
       ; the cdr is the previous row (or nil)
-      ":__quit_box"            "@quit"          "@__nil"
+      ":__set_cdr_box"         "@set_cdr"       "@__nil"
+      ":__set_car_box"         "@set_car"       "@__set_cdr_box"
+      ":__quit_box"            "@quit"          "@__set_car_box"
       ":__list_box"            "@list"          "@__quit_box"
       ":__read_char_box"       "@read_char"     "@__list_box"
       ":__pair_q_box"          "@pair_q"        "@__read_char_box"
