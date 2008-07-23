@@ -32,4 +32,14 @@
 			      (if (number? x)
 				  (print-num x)
 				  #t))))))
-		      
+
+(define list->string-helper 
+  (lambda (s l2 n)
+    (if (null? l2) s
+	(begin
+	  (string-set! s n (car l2))
+	  (list->string-helper s (+ n 1) (cdr l2))))))
+
+(define list->string 
+  (lambda (l)
+      (list->string-helper (make-string (length l)) (length l) l)))

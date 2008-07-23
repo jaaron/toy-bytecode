@@ -115,12 +115,15 @@
 			       "string?" "number?" "char?" "pair?"
 			       "read-char" "list" "quit"
 			       "set-car!" "set-cdr!"
+			       "string-set!"
+			       "make-string"
 			       ; these aren't defined yet!
 			       "and" "or"                                            ; boolean operators 
 			       "string=?" "char=?" "char<=?" "char>=?" "eof-object?" ; comparison functions 
 			       "list->string"                                        ; list functions			       
 			       "string-append" "substring" "make-string"             ; string functions 
 			       "set!"                                                ; modifiers
+
 			       ))))
 
 ; The compiler's internal notion of what instruction is currently being written
@@ -873,6 +876,68 @@
     (append-instructions (list "PUSH" (asm-number 1) "LOAD"))
     (assembly-funret)
 
+    ; setting the character at an offset in the string is easy
+    (append-instructions
+     (list ":string_set,2" "@__initial_env" "@__string_set" ":__string_set"))
+    (assembly-env-val 0 2)  ; (c)
+    (assembly-env-val 0 0)  ; (c str)
+    (assembly-env-val 0 1)  ; (c str n)
+    (append-instructions
+     (list "PUSH" (asm-number 2) ; (c str n 2)
+	   "ADD"                 ; (c str (+ n 2))
+	   "STOR"))              ; ()
+    (assembly-nil)
+    (assembly-funret)
+
+    ; make-string
+    (append-instructions
+     (list ":make_string,2" "@__initial_env" "@__make_string" ":__make_string"))
+    (assembly-env-val 0 0)                   ; (n)
+    (append-instruction "ALOC")              ; (s)
+    (assembly-env-val 0 1)                   ; (s c?)
+    (append-instructions
+     (list "ISCHR"                           ; (s (is-char? c?))
+	   "PUSH" "@__make_string_two_args"  ; (s (is-char? c?) make_string_two_args)
+	   "JTRUE"))                         ; (s)
+    (assembly-funret)
+    (append-instruction ":__make_string_two_args")  ; (s)
+    (append-instruction "DUP")                      ; (s s)
+    (assembly-env-val 0 0)                          ; (s s n)
+    
+    (append-instructions
+     (list ":__make_string_loop"
+	   "DUP"                                    ; (s s n n)
+	   "PUSH" (asm-number 0)                    ; (s s n n 0)
+	   "EQ"                                     ; (s s n (= n 0))
+	   "PUSH" "@__make_string_done"             ; (s s n (= n 0) make_string_done)
+	   "JTRUE"                                  ; (s s n)
+	   "DUP"                                    ; (s s n n)
+	   "ROT"))                                  ; (s n s n)
+    (assembly-nil)                                  ; (s n s n nil)
+    (assembly-env-val 0 1)                          ; (s n s n nil c)
+    (u-call-cons)                                   ; (s n s n (c))
+    (append-instruction "SWAP")                     ; (s n s (c) n)
+    (u-call-cons)                                   ; (s n s (n c))
+    (append-instruction "SWAP")                     ; (s n (n c) s)
+    (u-call-cons)                                   ; (s n (s n c))
+    (append-instructions 
+     (list "PUSH" "@__string_set_box"))             ; (s n (s n c) string_set_box)
+    (assembly-funcall)                              ; (s n nil)
+    (append-instructions 
+     (list "POP"                                    ; (s n)
+	   "PUSH" (asm-number -1)                   ; (s n -1)
+	   "ADD"                                    ; (s (- n 1))
+	   "SWAP"                                   ; ((- n 1) s)
+	   "DUP"                                    ; ((- n 1) s s)
+	   "ROT"                                    ; (s (- n 1) s)
+	   "ROT"                                    ; (s s (- n 1))
+	   "PUSH" "@__make_string_loop"             ; (s s (- n 1) make_string_loop)
+	   "JMP"))
+    (append-instructions 
+     (list ":__make_string_done"                    ; (s s n)
+	   "POP" "POP"))
+    (assembly-funret)
+
     ; converting a string to a list is a PIA. 
     (append-instructions 
      (list ":string_list,2" "@__initial_env" "@__string_list" ":__string_list"))
@@ -963,32 +1028,34 @@
       ; each row here defines a cons box where the car
       ; is the closure cell for the builtin function, and 
       ; the cdr is the previous row (or nil)
-      ":__set_cdr_box"         "@set_cdr"       "@__nil"
-      ":__set_car_box"         "@set_car"       "@__set_cdr_box"
-      ":__quit_box"            "@quit"          "@__set_car_box"
-      ":__list_box"            "@list"          "@__quit_box"
-      ":__read_char_box"       "@read_char"     "@__list_box"
-      ":__pair_q_box"          "@pair_q"        "@__read_char_box"
-      ":__char_q_box,2"        "@char_q"        "@__pair_q_box"
-      ":__number_q_box,2"      "@number_q"      "@__char_q_box"
-      ":__string_q_box,2"      "@string_q"      "@__number_q_box"
-      ":__string_length_box,2" "@string_length" "@__string_q_box"
-      ":__print_num_box,2"     "@print_num"     "@__string_length_box"
-      ":__print_char_box,2"    "@print_char"    "@__print_num_box"
-      ":__string_list_box,2"   "@string_list"   "@__print_char_box"
-      ":__divide_box,2"        "@divide"        "@__string_list_box"
-      ":__modulo_box,2"        "@modulo"        "@__divide_box"
-      ":__multiply_box,2"      "@multiply"      "@__modulo_box"
-      ":__subtract_box,2"      "@subtract"      "@__multiply_box"
-      ":__add_box,2"           "@add"           "@__subtract_box"
-      ":__cdr_box,2"           "@cdr"           "@__add_box"
-      ":__car_box,2"           "@car"           "@__cdr_box"
-      ":__cons_box,2"          "@cons"          "@__car_box"
-      ":__null_q_box,2"        "@null_q"        "@__cons_box"
-      ":__less_than_box,2"     "@less_than"     "@__null_q_box"
-      ":__equal_box,2"         "@equal"         "@__less_than_box"
+      ":__make_string_box,2"     "@make_string"     "@__nil"
+      ":__string_set_box,2"      "@string_set"      "@__make_string_box"
+      ":__set_cdr_box,2"         "@set_cdr"         "@__string_set_box"
+      ":__set_car_box,2"         "@set_car"         "@__set_cdr_box"
+      ":__quit_box,2"            "@quit"            "@__set_car_box"
+      ":__list_box,2"            "@list"            "@__quit_box"
+      ":__read_char_box,2"       "@read_char"       "@__list_box"
+      ":__pair_q_box,2"          "@pair_q"          "@__read_char_box"
+      ":__char_q_box,2"          "@char_q"          "@__pair_q_box"
+      ":__number_q_box,2"        "@number_q"        "@__char_q_box"
+      ":__string_q_box,2"        "@string_q"        "@__number_q_box"
+      ":__string_length_box,2"   "@string_length"   "@__string_q_box"
+      ":__print_num_box,2"       "@print_num"       "@__string_length_box"
+      ":__print_char_box,2"      "@print_char"      "@__print_num_box"
+      ":__string_list_box,2"     "@string_list"     "@__print_char_box"
+      ":__divide_box,2"          "@divide"          "@__string_list_box"
+      ":__modulo_box,2"          "@modulo"          "@__divide_box"
+      ":__multiply_box,2"        "@multiply"        "@__modulo_box"
+      ":__subtract_box,2"        "@subtract"        "@__multiply_box"
+      ":__add_box,2"             "@add"             "@__subtract_box"
+      ":__cdr_box,2"             "@cdr"             "@__add_box"
+      ":__car_box,2"             "@car"             "@__cdr_box"
+      ":__cons_box,2"            "@cons"            "@__car_box"
+      ":__null_q_box,2"          "@null_q"          "@__cons_box"
+      ":__less_than_box,2"       "@less_than"       "@__null_q_box"
+      ":__equal_box,2"           "@equal"           "@__less_than_box"
       ; actual initial env definition
-      ":__initial_env,2"       "@__equal_box"   "@__nil"
+      ":__initial_env,2"         "@__equal_box"     "@__nil"
       ))
      (define-builtin-functions)
      (append-instructions 

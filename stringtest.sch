@@ -17,3 +17,6 @@
     (print-string "5 is a string")
     (print-string "5 is not a string"))
 (print-char #\newline)
+
+(print-string (make-string 5 #\a))
+(print-char #\newline)
