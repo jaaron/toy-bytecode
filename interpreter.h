@@ -6,8 +6,9 @@
 #define VCONST 0x2
 #define PTR    0x3
 
+#define CHAR_FLAG 0x00800000
 #define MAKE_VCONST(x) (((x) << 2) | VCONST)
-#define MAKE_CHAR(x)   (((x) << 24) | VCONST)
+#define MAKE_CHAR(x)   (((x) << 24) | CHAR_FLAG | VCONST)
 #define MAKE_NUM(x)    ((x) << 2)
 #define MAKE_PTR(x,sz) (((x) << 10) | (((sz)  & 0xff) << 2) | PTR)
 

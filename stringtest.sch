@@ -18,5 +18,8 @@
     (print-string "5 is not a string"))
 (print-char #\newline)
 
-(print-string (make-string 5 #\a))
+(let ((x  (make-string 8 #\c)))
+  (string-set! x 6 #\d)
+  (print-string x)
+)
 (print-char #\newline)

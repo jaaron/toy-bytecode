@@ -52,7 +52,14 @@
 	fprintf(stream, "\t%d\n", NUM_TO_NATIVE(STACK(q)));		\
 	break;								\
       case VCONST:							\
-	fprintf(stream, "\tvc: %d\n", NUM_TO_NATIVE(STACK(q)));		\
+	if(IS_CHAR(STACK(q))){						\
+	  fprintf(stream,"\tchar: %c\n", CHAR_TO_NATIVE(STACK(q)));	\
+	}else if(IS_BOOL(STACK(q))){					\
+	  fprintf(stream, "\tbool: %c\n",				\
+		  STACK(q) == TRUE_VAL ? 'T' : 'F');			\
+	}else{								\
+	  fprintf(stream, "\tvc: %08lx\n", STACK(q));			\
+	}								\
 	break;								\
       case LCONST:							\
 	fprintf(stream, "\tlc: %d\n", NUM_TO_NATIVE(STACK(q)));		\
@@ -93,11 +100,6 @@
   NEXT
 #endif
 
-#define NUM    0x0
-#define LCONST 0x1
-#define VCONST 0x2
-#define PTR    0x3
-
 #define unlikely(x)     __builtin_expect((x),0)
 #define likely(x)     __builtin_expect((x),1)
 
@@ -114,10 +116,10 @@
 #define IS_PTR(x)    (CELL_TYPE(x) == PTR)
 #define IS_LCONST(x) (CELL_TYPE(x) == LCONST)
 #define IS_VCONST(x) (CELL_TYPE(x) == VCONST)
-#define IS_CONST(x)  ({long __tmp = (x); (IS_LCONST(__tmp)  || IS_VCONST(__tmp));})
-#define IS_BOOL(x)   ({long __tmp = (x); (__tmp == TRUE_VAL || __tmp == FALSE_VAL);})
-#define IS_CHAR(x)   ({long __tmp = (x); (IS_VCONST(__tmp) && __tmp & 0x00fffffc == 0);})
-#define IS_INS(x)    ({long __tmp = (x); (IS_VCONST(__tmp) && ( __tmp >> 2) < NR_INS);})
+#define IS_CONST(x)  (IS_LCONST(x)  || IS_VCONST(x))
+#define IS_BOOL(x)   (x == TRUE_VAL || x == FALSE_VAL)
+#define IS_CHAR(x)   (IS_VCONST(x) && ((x) & CHAR_FLAG) == CHAR_FLAG)
+#define IS_INS(x)    (IS_VCONST(x) && ( (x) >> 2) < NR_INS)
 
 #define ASSERT_TYPE(x,t)     if(unlikely(CELL_TYPE(x) != t)){TYPE_ERROR(t);}
 #define ASSERT_NOT_TYPE(x,t) if(unlikely(CELL_TYPE(x) == t)){TYPE_ERROR(!t);}
@@ -551,7 +553,7 @@ int main(int argc, char *argv[])
   INSTRUCTION(STOR, do{
       ASSERT_TYPE(STACK(0), NUM)
       ASSERT_TYPE(STACK(1), PTR);
-      if(NUM_TO_NATIVE(STACK(0)) < 0 || NUM_TO_NATIVE(STACK(0)) > PTR_SIZE(STACK(1))){
+      if(NUM_TO_NATIVE(STACK(0)) < 0 || NUM_TO_NATIVE(STACK(0)) >= PTR_SIZE(STACK(1))){
 	fprintf(stderr, "Invalid store: offset %d out of bounds\n", NUM_TO_NATIVE(STACK(0)));
 	exit(1);
       }
