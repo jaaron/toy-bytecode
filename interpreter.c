@@ -6,6 +6,7 @@
 #include <errno.h>
 #include "interpreter.h"
 #include <string.h>
+
 /* Internal macros */
 #ifdef __GUARD_STACK__
 #define STACK(x) ({					\
@@ -68,12 +69,15 @@
 	fprintf(stream, "\tptr: %d sz: %d\n",				\
 		PTR_TARGET(STACK(q)), PTR_SIZE(STACK(q)));		\
 	break;								\
+      default:								\
+	fprintf(stream, "\t(%1x)?: %08lx\n",				\
+		CELL_TYPE(STACK(q)), STACK(q) & (~(0x3 << 30)));	\
       }									\
       q++;								\
     }									\
   }while(0)
 
-#define IDX_FROM_INS(i) (i >> 2)
+#define IDX_FROM_INS(i) (i)
 
 #ifdef __TRACE__
 
@@ -103,14 +107,14 @@
 #define unlikely(x)     __builtin_expect((x),0)
 #define likely(x)     __builtin_expect((x),1)
 
-#define PTR_TARGET(x) (((unsigned long)x) >> 10)
-#define PTR_SIZE(x)   ((((unsigned long)x) >> 2) & 0xff)
+#define PTR_TARGET(x) (((unsigned int)x) & 0x7fff)
+#define PTR_SIZE(x)   ((((unsigned int)x) >> 15) & 0x7ff)
 
-#define NUM_TO_NATIVE(x) ((x) >> 2 | NUM)
+#define NUM_TO_NATIVE(x) (((x) << 2) >> 2)
 
-#define CHAR_TO_NATIVE(x) ((x) >> 24)
+#define CHAR_TO_NATIVE(x) ((char)((x) & 0xff))
 
-#define CELL_TYPE(x) ((x) & 0x3)
+#define CELL_TYPE(x) (((unsigned int)x) & (0x3 << 30))
 
 #define IS_NUM(x)    (CELL_TYPE(x) == NUM)
 #define IS_PTR(x)    (CELL_TYPE(x) == PTR)
@@ -119,7 +123,7 @@
 #define IS_CONST(x)  (IS_LCONST(x)  || IS_VCONST(x))
 #define IS_BOOL(x)   (x == TRUE_VAL || x == FALSE_VAL)
 #define IS_CHAR(x)   (IS_VCONST(x) && ((x) & CHAR_FLAG) == CHAR_FLAG)
-#define IS_INS(x)    (IS_VCONST(x) && ( (x) >> 2) < NR_INS)
+#define IS_INS(x)    (IS_VCONST(x) && ( (x) < NR_INS))
 
 #define ASSERT_TYPE(x,t)     if(unlikely(CELL_TYPE(x) != t)){TYPE_ERROR(t);}
 #define ASSERT_NOT_TYPE(x,t) if(unlikely(CELL_TYPE(x) == t)){TYPE_ERROR(!t);}

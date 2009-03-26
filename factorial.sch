@@ -7,5 +7,4 @@
 		    (foo f x (- n 1))))))
 (foo (lambda (x) 
        (print-num (factorial x))
-       (print-char #\newline)) 10 100)
-
+       (print-char #\newline)) 10 1)
