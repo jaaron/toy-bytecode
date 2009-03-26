@@ -11,8 +11,9 @@
    time) compilers.  But first, let's write an interpreter.
 
    This post is in good old fashioned C.  The complete source code for
-   the interpreter, an assembler, and a pretty hackish compiler can be
-   downloaded from http://aaron.13th-floor.org/code/bytecode.tgz
+   the interpreter, an assembler, a pretty hackish compiler, and some
+   examples can be downloaded from 
+   http://aaron.13th-floor.org/src/bytecode.tgz
 */
 
 /* First we include a number of standard C headers.  Nothing
