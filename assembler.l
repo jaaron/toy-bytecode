@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 #include "interpreter.h"
 
 #define PACK_NUM(x)        htonl(MAKE_NUM(x))
@@ -12,20 +13,20 @@
 
   static struct {    //  1024 labels should be sufficient since
     char *txt;      //  a program is at the moment at most 1024 
-    long dst;       //  words
+    int32_t dst;       //  words
   } labels[MEM_SIZE]; 
   static int nr_labels =0;
 
   static struct {
-     char *txt;
-     long dst;
+      char *txt;
+      uint32_t dst;
   } unresolved_labels[MEM_SIZE];
-  static long nr_unresolved = 0;
+  static int32_t nr_unresolved = 0;
 
-  static long out_buffer[MEM_SIZE];
-  static long words = 0;
+  static uint32_t out_buffer[MEM_SIZE];
+  static uint32_t words = 0;
 
-  static inline long decode_ptr(char *text, int base1, int base2){
+  static inline int32_t decode_ptr(char *text, int base1, int base2){
     char *comma;
     unsigned long addr = strtoul(text, &comma, base1);    
     char sz = (*comma == '\0') ? 0xff : (char) (strtoul(comma+1, NULL, base2) & 0xff);
@@ -109,9 +110,9 @@ p{D_NUM},{D_NUM} {out_buffer[words++] = decode_ptr(yytext+1, 10, 10);}
 p{D_NUM},{X_NUM} {out_buffer[words++] = decode_ptr(yytext+1, 10, 16);}
 
 v{X_NUM}         {out_buffer[words++] = PACK_VM_CONST(strtoul(yytext+1, NULL, 16));}
-v{D_NUM}         {out_buffer[words++] = PACK_VM_CONST(strtoul(yytext+1, NULL, 16));}
-l{X_NUM}         {out_buffer[words++] = PACK_VM_CONST(strtol(yytext+1, NULL, 10));}
-l{D_NUM}         {out_buffer[words++] = PACK_VM_CONST(strtol(yytext+1, NULL, 10));}
+v{D_NUM}         {out_buffer[words++] = PACK_VM_CONST(strtoul(yytext+1, NULL, 10));}
+l{X_NUM}         {out_buffer[words++] = PACK_LANG_CONST(strtol(yytext+1, NULL, 16));}
+l{D_NUM}         {out_buffer[words++] = PACK_LANG_CONST(strtol(yytext+1, NULL, 10));}
 
 ;;.*\n         {}
 #.*\n          {}
@@ -158,12 +159,12 @@ FALSE    {out_buffer[words++] = PACK_VM_CONST(FALSE_VAL);}
 :{IDENT},{D_NUM} {
   int i;
   char *comma           = strchr(yytext,',');
-  unsigned long sz      = atoi(comma+1);
+  int32_t sz      = atoi(comma+1);
   labels[nr_labels].txt = malloc(sizeof(char)*(comma - yytext));
   memcpy(labels[nr_labels].txt, yytext+1, comma - yytext - 1);
   labels[nr_labels].txt[comma - yytext-1] = '\0';
   labels[nr_labels].dst = PACK_PTR(words, sz);
-  fprintf(stderr, "label %s at offset %d size: %d\n", yytext+1, words, sz);
+  fprintf(stderr, "label %s at offset %u size: %u\n", yytext+1, words, sz);
 
   for(i=0;i<nr_unresolved;i++){
     if(unresolved_labels[i].txt &&
@@ -181,7 +182,7 @@ FALSE    {out_buffer[words++] = PACK_VM_CONST(FALSE_VAL);}
   int i;
   labels[nr_labels].txt = strdup(yytext+1);
   labels[nr_labels].dst = PACK_PTR(words,0xff);
-  fprintf(stderr, "label %s at offset %d unknown size\n", yytext+1, words);
+  fprintf(stderr, "label %s at offset %u unknown size\n", yytext+1, words);
 
   for(i=0;i<nr_unresolved;i++){
     if(unresolved_labels[i].txt &&
@@ -213,7 +214,7 @@ FALSE    {out_buffer[words++] = PACK_VM_CONST(FALSE_VAL);}
 
 [[:space:]]*   {}
 <<EOF>>        { yyterminate(); }
-.              { fprintf(stderr, "Error: unexpected token: %s after %d words\n", yytext, words); exit(1);}
+.              { fprintf(stderr, "Error: unexpected token: %s after %u words\n", yytext, words); exit(1);}
 
 %%
 
@@ -230,7 +231,7 @@ int main(int argc, char *argv[])
 
   for(i=0;i<nr_unresolved;i++){
     if(unresolved_labels[i].txt != NULL){
-      fprintf(stderr, "Unresolved reference to label: \"%s\" at offset %d\n",
+      fprintf(stderr, "Unresolved reference to label: \"%s\" at offset %u\n",
 	      unresolved_labels[i].txt, unresolved_labels[i].dst);
       failure = 1;
     }
@@ -239,8 +240,8 @@ int main(int argc, char *argv[])
     fprintf(stderr, "Dying From Failure\n");
     exit(1);
   }
-  write(output_filedes, out_buffer, words*sizeof(long));
-  fprintf(stderr, "Wrote %d words\n", words);
+  write(output_filedes, out_buffer, words*sizeof(int32_t));
+  fprintf(stderr, "Wrote %u words\n", words);
   close(output_filedes);
   return 0;
 }

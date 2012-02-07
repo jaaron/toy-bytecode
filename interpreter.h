@@ -9,6 +9,7 @@
 #define CHAR_FLAG 0x00800000
 
 #define MAKE_VCONST(x) (x)
+#define MAKE_LCONST(x) ((x & ~LCONST) | LCONST)
 #define MAKE_CHAR(x)   (CHAR_FLAG | (x))
 #define MAKE_NUM(x)    ((x & ~NUM) | NUM)
 #define MAKE_PTR(x,sz) (PTR | (((sz) & 0x7fff) << 15) | (x & 0x7fff))

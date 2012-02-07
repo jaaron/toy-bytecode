@@ -25,6 +25,8 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+#include <stdint.h>
+#include <inttypes.h>
 
 /* 
    The file interpreter.h defines all the opcodes, and the basic types
@@ -72,7 +74,7 @@
 
 #ifdef __GUARD_STACK__
 #define STACK(x) ({					\
-  long __tmp = x;					\
+  int32_t __tmp = x;					\
   if(__tmp > STACK_HEIGHT()){				\
   fprintf(stderr, "Invalid stack access at %ld\n",	\
 	  pc-memory);					\
@@ -110,7 +112,7 @@
    stack pointer so use with care.
 */
 #define STACK_PUSH(x) do{			\
-    long __tmp = x;				\
+    int32_t __tmp = x;				\
     *sp = __tmp;				\
     sp--;					\
   }while(0)
@@ -125,12 +127,13 @@
 */
 #define DO_DUMP(stream) do{						\
     int q=0;								\
-    fprintf(stream, "pc: %d, hp: %d sp: %p height: %d\nstack:\n",	\
+    fprintf(stream, "pc: %ld, hp: %ld sp: %p height: %ld\nstack:\n",	\
 	    pc-memory, hp-memory, sp, STACK_HEIGHT());			\
     while(q < STACK_HEIGHT() ){						\
       switch(CELL_TYPE(STACK(q))){					\
       case NUM:								\
-	fprintf(stream, "\t%d\n", NUM_TO_NATIVE(STACK(q)));		\
+	  fprintf(stream, "\t%"PRId32" (%"PRIx32")\n",			\
+		  NUM_TO_NATIVE(STACK(q)), STACK(q));			\
 	break;								\
       case VCONST:							\
 	if(IS_CHAR(STACK(q))){						\
@@ -139,19 +142,20 @@
 	  fprintf(stream, "\tbool: %c\n",				\
 		  STACK(q) == TRUE_VAL ? 'T' : 'F');			\
 	}else{								\
-	  fprintf(stream, "\tvc: %08lx\n", STACK(q));			\
+	    fprintf(stream, "\tvc: %0"PRIx32"\n", STACK(q));		\
 	}								\
 	break;								\
       case LCONST:							\
-	fprintf(stream, "\tlc: %d\n", NUM_TO_NATIVE(STACK(q)));		\
+	  fprintf(stream, "\tlc: %"PRId32"\n",				\
+		  NUM_TO_NATIVE(STACK(q)));				\
 	break;								\
       case PTR:								\
 	fprintf(stream, "\tptr: %d sz: %d\n",				\
 		PTR_TARGET(STACK(q)), PTR_SIZE(STACK(q)));		\
 	break;								\
       default:								\
-	fprintf(stream, "\t(%1x)?: %08lx\n",				\
-		CELL_TYPE(STACK(q)), STACK(q) & (~(0x3 << 30)));	\
+	  fprintf(stream, "\t(%1x)?: %0"PRIx32"\n",			\
+		  CELL_TYPE(STACK(q)), STACK(q) & (~(0x3 << 30)));	\
       }									\
       q++;								\
     }									\
@@ -177,7 +181,7 @@
 
 #define NEXT do{						\
     fprintf(stderr,"==================================\n");	\
-    fprintf(stderr,"initial pc: %d instruction: %d ",		\
+    fprintf(stderr,"initial pc: %ld instruction: %"PRId32" ",	\
 	    pc-memory, IDX_FROM_INS(*pc));			\
     goto *instructions[IDX_FROM_INS(*pc++)];			\
   }while(0)
@@ -197,7 +201,8 @@
    the addres specified in the array of opcode handlers.  This is in
    contrast to a traditional interpreter model that looks more like a
    case statement embedded in a big while loop.  The indirect threaded
-   approach requires no comparisons figure out which handler to execute.
+   approach requires no comparisons to figure out which handler to
+   execute.
 
    The NEXT macro encapsulates this dispatching paradigm.  Every
    instruction handler we write will end with a call to NEXT.
@@ -230,19 +235,19 @@
    different VM types.  The corresponding packers are defined in the
    interpreter.h header file.
 */
-#define PTR_TARGET(x) (((unsigned int)x) & 0x7fff)
-#define PTR_SIZE(x)   ((((unsigned int)x) >> 15) & 0x7ff)
-#define NUM_TO_NATIVE(x) (((x) << 2) >> 2)
-#define CHAR_TO_NATIVE(x) ((char)((x) & 0xff))
-#define CELL_TYPE(x) (((unsigned int)x) & (0x3 << 30))
-#define IS_NUM(x)    (CELL_TYPE(x) == NUM)
-#define IS_PTR(x)    (CELL_TYPE(x) == PTR)
-#define IS_LCONST(x) (CELL_TYPE(x) == LCONST)
-#define IS_VCONST(x) (CELL_TYPE(x) == VCONST)
-#define IS_CONST(x)  (IS_LCONST(x)  || IS_VCONST(x))
-#define IS_BOOL(x)   (x == TRUE_VAL || x == FALSE_VAL)
-#define IS_CHAR(x)   (IS_VCONST(x) && ((x) & CHAR_FLAG) == CHAR_FLAG)
-#define IS_INS(x)    (IS_VCONST(x) && ( (x) < NR_INS))
+#define PTR_TARGET(x)        (((unsigned int)x) & 0x7fff)
+#define PTR_SIZE(x)          ((((unsigned int)x) >> 15) & 0x7ff)
+#define NUM_TO_NATIVE(x)     ((typeof(x))((((int)x) << 2) >> 2))
+#define CHAR_TO_NATIVE(x)    ((char)((x) & 0xff))
+#define CELL_TYPE(x)         (((unsigned int)x) & (0x3 << 30))
+#define IS_NUM(x)            (CELL_TYPE(x) == NUM)
+#define IS_PTR(x)            (CELL_TYPE(x) == PTR)
+#define IS_LCONST(x)         (CELL_TYPE(x) == LCONST)
+#define IS_VCONST(x)         (CELL_TYPE(x) == VCONST)
+#define IS_CONST(x)          (IS_LCONST(x)  || IS_VCONST(x))
+#define IS_BOOL(x)           (x == TRUE_VAL || x == FALSE_VAL)
+#define IS_CHAR(x)           (IS_VCONST(x) && ((x) & CHAR_FLAG) == CHAR_FLAG)
+#define IS_INS(x)            (IS_VCONST(x) && ( (x) < NR_INS))
 
 #define ASSERT_TYPE(x,t)     if(unlikely(CELL_TYPE(x) != t)){TYPE_ERROR(t);}
 #define ASSERT_NOT_TYPE(x,t) if(unlikely(CELL_TYPE(x) == t)){TYPE_ERROR(!t);}
@@ -278,30 +283,30 @@
     exit(-1);							\
   }while(0);
 
-static long memory[MEM_SIZE];          /* all of memory */
+static int32_t memory[MEM_SIZE];          /* all of memory */
 
-static long *sp = &memory[MEM_SIZE-1]; /* The top 256 words of memory
+static int32_t *sp = &memory[MEM_SIZE-1]; /* The top 256 words of memory
 					  are reserved for the stack */
 
-static long *prog_end;                 /* pointer to the end of the
+static int32_t *prog_end;                 /* pointer to the end of the
 					  loaded program text */
 
-static long *pc = memory;              /* the program counter */
+static int32_t *pc = memory;              /* the program counter */
 
-static long heap_size;                 /* maximum size of a heap
+static int32_t heap_size;                 /* maximum size of a heap
 					  (computed based on
 					  prog_end) */
 
-static long *upper_heap;               /* upper_heap == prog_end + heap_size; */
+static int32_t *upper_heap;               /* upper_heap == prog_end + heap_size; */
 
-static long *heap_base;                /* pointer to the first cell of
+static int32_t *heap_base;                /* pointer to the first cell of
 					  the heap, Should always be
 					  either prog_end, or
 					  upper_head. */
 				       
-static long *hp;                       /* the heap pointer. */
+static int32_t *hp;                       /* the heap pointer. */
 
-static long  rr = MAKE_NUM(0);         /* the root regiseter can be
+static int32_t  rr = MAKE_NUM(0);         /* the root regiseter can be
 					  used by the language to
 					  store an additional root for
 					  gc (anything on the stack is
@@ -311,31 +316,31 @@ static long  rr = MAKE_NUM(0);         /* the root regiseter can be
 					  containing local variables. */
 
 #ifdef __STATS__
-static long max_alloc = 0;
+static int32_t max_alloc = 0;
 #endif
 
 /* 
    The garbage collector is a basic stop and copy collector.  It
    doesn't really try to do anything clever, and (temporarily) uses a
-   rather obsene amount of memory (twice MEM_SIZE!).  
+   rather obscene amount of memory (twice MEM_SIZE!).  
 
    The new_heap argument is either upper_heap or prog_end, whichever
    is not currently active.
 */
-void gc(long *new_heap)
+void gc(int32_t *new_heap)
 {
-  long mappings[MEM_SIZE];
-  long worklist[MEM_SIZE];
-  long *work = worklist;
+  int32_t mappings[MEM_SIZE];
+  int32_t worklist[MEM_SIZE];
+  int32_t *work = worklist;
   int i;
-  long tmp, val;
-  memset(mappings, 0xffffffff, MEM_SIZE*sizeof(long));
+  int32_t tmp, val;
+  memset(mappings, 0xffffffff, MEM_SIZE*sizeof(int32_t));
 
   hp = new_heap;
 
 #ifdef __GC_DEBUG__
   fprintf(stderr, 
-	  "Entering gc with new_heap = %d\n",
+	  "Entering gc with new_heap = %ld\n",
 	  new_heap - memory);
 #endif
   /* here's the deal,
@@ -347,7 +352,7 @@ void gc(long *new_heap)
 
      The way this works is whenever we encounter a pointer
      we check two things:
-        - is it's entry in the mappings array equal to 
+        - is its entry in the mappings array equal to 
 	  0xffffffff, if so then we have not yet allocated
 	  space for it in the new heap.
 
@@ -521,7 +526,7 @@ void gc(long *new_heap)
   }
 
 #ifdef __GC_DEBUG__
-  memset(new_heap == upper_heap ? prog_end : upper_heap, 0xabababab, heap_size*sizeof(long));
+  memset(new_heap == upper_heap ? prog_end : upper_heap, 0xabababab, heap_size*sizeof(int32_t));
   fprintf(stderr, "After gc %d cells available (hp = %d)\n",
 	  heap_size - (hp - heap_base), hp - memory);
 #endif
@@ -574,7 +579,7 @@ int main(int argc, char *argv[])
 
   /* We first do some basic startup stuff to load the program */
   int fd;
-  long nread;  
+  int nread;  
   /* Read from a file or stdin */
   fd = argc > 1 ? open(argv[1], O_RDONLY) : STDIN_FILENO;
   if(fd < 0){
@@ -591,7 +596,7 @@ int main(int argc, char *argv[])
   nread /= 4;
 
   /* Initialize the global variables pointing to the end of the text
-     and the heap pointer */.
+     and the heap pointer */
   prog_end   = heap_base = hp = memory + nread;
 
   /* Give half the remaining memory to each heap */
@@ -622,7 +627,7 @@ int main(int argc, char *argv[])
   INSTRUCTION(POP, STACK_POP());
   INSTRUCTION(SWAP,
 	      do{
-		long tmp = STACK(0);
+		int32_t tmp = STACK(0);
 		STACK(0) = STACK(1);
 		STACK(1) = tmp;
 	      }while(0)
@@ -630,7 +635,7 @@ int main(int argc, char *argv[])
   INSTRUCTION(DUP, STACK_PUSH(STACK(0)));
   INSTRUCTION(ROT,
 	      do{
-		long tmp = STACK(0);		
+		int32_t tmp = STACK(0);		
 		STACK(0) = STACK(1);
 		STACK(1) = STACK(2);
 		STACK(2) = tmp;
@@ -642,7 +647,7 @@ int main(int argc, char *argv[])
      off the stack, push the current pc on, then set the new pc. */
   INSTRUCTION(CALL,
 	      do{
-		long tmp = pc - memory;
+		int32_t tmp = pc - memory;
 		ASSERT_TYPE(STACK(0), PTR);
 		pc = memory + PTR_TARGET(STACK(0));
 		STACK(0) = MAKE_PTR(tmp,0);
@@ -778,7 +783,7 @@ int main(int argc, char *argv[])
 	ASSERT_TYPE(STACK(1), PTR);
       if(NUM_TO_NATIVE(STACK(0)) < 0 || 
 	 NUM_TO_NATIVE(STACK(0)) >= PTR_SIZE(STACK(1))){
-	fprintf(stderr, "Invalid store: offset %d out of bounds\n",
+	fprintf(stderr, "Invalid store: offset %"PRId32" out of bounds\n",
 		NUM_TO_NATIVE(STACK(0)));
 	exit(1);
       }
@@ -794,7 +799,7 @@ int main(int argc, char *argv[])
       ASSERT_TYPE(STACK(1), PTR);
       if(NUM_TO_NATIVE(STACK(0)) < 0 || 
 	 NUM_TO_NATIVE(STACK(0)) > PTR_SIZE(STACK(1))){
-	fprintf(stderr, "Invalid load: offset %d out of bounds\n", 
+	fprintf(stderr, "Invalid load: offset %"PRId32" out of bounds\n", 
 		NUM_TO_NATIVE(STACK(0)));
 	exit(1);
       }
@@ -804,7 +809,7 @@ int main(int argc, char *argv[])
 
   /* Memory Allocation */
   INSTRUCTION(ALOC, do{
-      long __tmp;
+      int32_t __tmp;
       ASSERT_TYPE(STACK(0), NUM);
       HEAP_CHECK(NUM_TO_NATIVE(STACK(0)));
       __tmp = MAKE_PTR(hp - memory, NUM_TO_NATIVE(STACK(0)));
@@ -821,7 +826,7 @@ int main(int argc, char *argv[])
   INSTRUCTION(GETC, STACK_PUSH(MAKE_CHAR(getchar())));
   INSTRUCTION(DUMP, DO_DUMP(stdout));
   INSTRUCTION(PINT, ASSERT_TYPE(STACK(0), NUM);    
-	      printf("%ld", NUM_TO_NATIVE(STACK(0))); STACK_POP());
+	      printf("%"PRId32, NUM_TO_NATIVE(STACK(0))); STACK_POP());
   INSTRUCTION(PCHR, ASSERT_TYPE(STACK(0), VCONST); 
 	      putchar(CHAR_TO_NATIVE(STACK_POP())));
 

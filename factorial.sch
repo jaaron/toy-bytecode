@@ -1,10 +1,13 @@
 (define factorial (lambda (x) (if (= x 0) 1 
 				  (* x (factorial (- x 1))))))
-(define foo (lambda (f x n) 
-	      (if (= n 1) (f x)
+(define repeat (lambda (f n) 
+	      (if (= n 1) (f)
 		  (begin
-		    (f x)
-		    (foo f x (- n 1))))))
-(foo (lambda (x) 
-       (print-num (factorial x))
-       (print-char #\newline)) 10 10000)
+		    (f)
+		    (repeat f (- n 1))))))
+
+(repeat (lambda ()
+	  (begin
+	    (print-num (factorial 10))
+	    (print-char #\newline)))
+	  100)
