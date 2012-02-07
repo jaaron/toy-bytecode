@@ -420,7 +420,7 @@
 	  ; this is an error
 	  (begin
 	    ; this should really write to stderr.
-	    (display (string-append "Undefined symbol: " r))
+	    (display (string-append "Undefined symbol: " r "\n"))
 	    (quit))
 	  )
       #f
