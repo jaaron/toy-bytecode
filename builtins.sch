@@ -43,3 +43,28 @@
 (define list->string 
   (lambda (l)
       (list->string-helper (make-string (length l)) (length l) l)))
+
+(define reverse
+  (lambda (l acc)
+    (if (null? l) acc  (reverse (cdr l) (cons (car l) acc)))))
+
+(define number->string-helper
+  (lambda (n rest)
+    (let ((digit-to-char (lambda (d)
+			   (if (= n 0) #\0
+			       (if (= n 1) #\1
+				   (if (= n 2) #\2
+				       (if (= n 3) #\3 
+					   (if (= n 4) #\4
+					       (if (= n 5) #\5
+						   (if (= n 6) #\6
+						       (if (= n 7) #\7
+							   (if (= n 8) #\8
+							       (if (= n 9) #\9 nil)))))))))))))
+      (if (= n 0)
+	  (list->string (reverse rest))
+	  (number->string-helper (/ n 10) (cons (digit-to-char (% n 10)) rest))))))
+
+(define number->string
+  (lambda (n) (number->string-helper n)))
+    
