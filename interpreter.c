@@ -235,8 +235,8 @@
    different VM types.  The corresponding packers are defined in the
    interpreter.h header file.
 */
-#define PTR_TARGET(x)        (((unsigned int)x) & 0x7fff)
-#define PTR_SIZE(x)          ((((unsigned int)x) >> 15) & 0x7ff)
+#define PTR_TARGET(x)        (((unsigned int)x) & PTR_TARGET_MASK)
+#define PTR_SIZE(x)          ((((unsigned int)x) >> PTR_SIZE_SHIFT) & PTR_SIZE_MASK)
 #define NUM_TO_NATIVE(x)     ((typeof(x))((((int)x) << 2) >> 2))
 #define CHAR_TO_NATIVE(x)    ((char)((x) & 0xff))
 #define CELL_TYPE(x)         (((unsigned int)x) & (0x3 << 30))
@@ -765,10 +765,15 @@ int main(int argc, char *argv[])
     }while(0));
 
   INSTRUCTION(LT, do{
-      ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM); 
-      STACK(1) = (STACK(0) < STACK(1) ? TRUE_VAL : FALSE_VAL); 
-      STACK_POP();
-    }while(0));
+	  if(IS_NUM(STACK(0)) && IS_NUM(STACK(1))){
+	      STACK(1) = NUM_TO_NATIVE(STACK(0)) < NUM_TO_NATIVE(STACK(1)) ? TRUE_VAL : FALSE_VAL;	     
+	  }else if(IS_CHAR(STACK(0)) && IS_CHAR(STACK(1))){
+	      STACK(1) = CHAR_TO_NATIVE(STACK(0)) < CHAR_TO_NATIVE(STACK(1)) ? TRUE_VAL : FALSE_VAL;
+	  }else{
+	      TYPE_ERROR(CHAR or NUM);
+	  }
+	  STACK_POP();
+      }while(0));
   
   /* Memory access */
 

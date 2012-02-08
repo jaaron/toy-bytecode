@@ -22,4 +22,11 @@
   (string-set! x 6 #\d)
   (print-string x)
 )
+
+(print-char #\newline)
+(print-char #\")
+(print-char #\newline)
+(print-char #\')
+(print-char #\newline)
+(print-char #\\)
 (print-char #\newline)

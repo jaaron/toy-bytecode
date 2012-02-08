@@ -42,7 +42,7 @@ D_NUM   (\+|-)?{DIGIT}+
 X_NUM   0[xX]{XDIGIT}+
 IDENT   [a-zA-Z_][a-zA-Z_0-9]*
 
-STRCHARS (\\\")|([^\"])
+STRCHARS (\\\")|(\\\\)|(\\\')|(\\a)|(\\b)|(\\f)|(\\n)|(\\r)|(\\t)|(\\v)|([^\"\\])
 
 %%
 '[^\\]'   {out_buffer[words++] = PACK_CHAR(*(yytext+1));}
@@ -155,6 +155,7 @@ ISINS    {out_buffer[words++] = PACK_VM_CONST(I_ISINS);}
 
 TRUE     {out_buffer[words++] = PACK_VM_CONST(TRUE_VAL);}
 FALSE    {out_buffer[words++] = PACK_VM_CONST(FALSE_VAL);}
+EOF      {out_buffer[words++] = PACK_CHAR(EOF);}
 
 :{IDENT},{D_NUM} {
   int i;

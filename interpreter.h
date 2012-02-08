@@ -1,5 +1,5 @@
-#define MEM_SIZE   32768
-#define STACK_SIZE 256
+#define MEM_SIZE   0x20000
+#define STACK_SIZE 0x200
 
 #define NUM    (0x3 << 30)
 #define LCONST (0x1 << 30)
@@ -10,9 +10,13 @@
 
 #define MAKE_VCONST(x) (x)
 #define MAKE_LCONST(x) ((x & ~LCONST) | LCONST)
-#define MAKE_CHAR(x)   (CHAR_FLAG | (x))
+#define MAKE_CHAR(x)   (CHAR_FLAG | (x & 0x007fffff))
 #define MAKE_NUM(x)    ((x & ~NUM) | NUM)
-#define MAKE_PTR(x,sz) (PTR | (((sz) & 0x7fff) << 15) | (x & 0x7fff))
+
+#define PTR_SIZE_SHIFT  16
+#define PTR_SIZE_MASK   ((1<<(30 - PTR_SIZE_SHIFT))-1)
+#define PTR_TARGET_MASK ((1<<PTR_SIZE_SHIFT)-1)
+#define MAKE_PTR(x,sz) (PTR | (((sz) & PTR_SIZE_MASK) << PTR_SIZE_SHIFT) | (x & PTR_TARGET_MASK))
 
 #define INS(i) MAKE_VCONST(i)
 

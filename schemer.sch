@@ -9,9 +9,11 @@
 (define is-numeric? (lambda (str)
 		      (let ((r (string->list str)))
 			(if (null? r) #f
-			    (if (or (char=? (car r) #\-) (char=? (car r) #\+))
+			    (if (char=? (car r) #\-)
 				(if (null? (cdr r)) #f (for-all? is-number? (cdr r)))
-				(for-all? is-number? r))))))
+				(if (char=? (car r) #\+) 
+				    (if (null? (cdr r)) #f (for-all? is-number? (cdr r)))
+				    (for-all? is-number? r)))))))
 
 (define calculate-string-list-length
   (lambda (strl n)
@@ -68,10 +70,9 @@
 (define find-builtin-helper
   (lambda (f ss)
     (if (null? ss) #f
-	(if (and (string? f) 
-		 (string=? f (car (car ss))))
-	    (cdr (car ss))
-	    (find-builtin-helper f (cdr ss))))))
+	(if (not (string? f)) #f
+	    (if (string=? f (car (car ss))) (cdr (car ss))
+		(find-builtin-helper f (cdr ss)))))))
     
 (define find-builtin 
   (lambda (f) (find-builtin-helper f (builtin-forms))))    
@@ -116,27 +117,16 @@
 			       "read-char" "list" "quit"
 			       "set-car!" "set-cdr!"
 			       "string-set!"
-			       "make-string"
-			       ; these aren't defined yet!
-			       "and" "or"                                            ; boolean operators 
-			       "string=?" "char=?" "char<=?" "char>=?" "eof-object?" ; comparison functions 
-			       "list->string"                                        ; list functions			       
-			       "string-append" "substring" "make-string"             ; string functions 
-			       "set!"                                                ; modifiers
-
+			       "make-string" "char=?" "char<?"
+			       "eof-object?"
 			       ))))
-
-; The compiler's internal notion of what instruction is currently being written
-(define instruction-pointer 0)
-(define increment-ip (lambda ()
-  (set! instruction-pointer (+ 1 instruction-pointer))))
 
 ; (fresh-label) is used to generate labels for each lambda 
 ; expression and for string constants.  
-(define label-counter 0)
+(define label-counter (cons 0 '()))
 (define fresh-label (lambda ()
-		      (set! label-counter (+ label-counter 1))
-		      (string-append "__anonymous" (number->string label-counter))
+		      (set-car! label-counter (+ (car label-counter) 1))
+		      (string-append "__anonymous" (number->string (car label-counter)))
 		      ))
 
 ; append an instruction to the ouptut stream
@@ -145,7 +135,6 @@
     (begin 
       (display ins)
       (display "\n")
-      (increment-ip)
     )
 ))
   
@@ -306,7 +295,6 @@
 ; assembly-env-cell places the cons box whose car is 
 ; at the desired offsets on the stack.  
 ; assembly-env-val actually loads the value.  
-; The distinction is made for the purpose of set!
 (define assembly-env-cell
   (lambda (depth idx)
     (append-instructions 
@@ -408,19 +396,28 @@
 			  (string-append
 			   (if (string=? s "#\\newline")
 			       "\\n" 
-			       (if (string=? s "#\\space")
-				   " "
-				   (substring s 2 3))) "'")))) #f))
+			       (if (string=? s "#\\\\")
+				   "\\\\"
+				   (if (string=? s "#\\'")
+				       "\\'"
+				       (if (string=? s "#\\\"") "\\\""
+					   (if (string=? s "#\\space")
+					       " "
+					       (substring s 2 3)))))) 
+			   "'")))) #f))
 
 (define compile-reference 
   (lambda (r env)
     (let ((i (lookup-reference r env)))
       (if i 
-	  (assembly-env-val (car i) (cdr i))
-	  ; this is an error
 	  (begin
-	    ; this should really write to stderr.
-	    (display (string-append "Undefined symbol: " r "\n"))
+	    (append-instructions (list (string-append ";; Resolving symbol " r)))
+	    (assembly-env-val (car i) (cdr i)))
+	  ;; this is an error
+	  (begin
+	    ;; this should really write to stderr.
+	    (display (string-append "Undefined symbol: " 
+				    (string-append r "\n")))
 	    (quit))
 	  )
       #f
@@ -525,21 +522,23 @@
 ; post-env are the environments before and after the call.
 (define compile-define
   (lambda (l env rest)
-    (let ((v (lookup-reference (car (cdr l)) env))
-	  (r (compile-sexp (car (cdr (cdr l))) env #t)))
-      (if v 
-	  (begin
-	    (assembly-env-cell (car v) (cdr v))
-	    (u-call-set-car))
-	  (begin
-	    (set-car! top-level-env (cons (car (cdr l)) (car top-level-env)))
-	    (append-instruction "RDRR")                  ; (v env)
-	    (u-call-car)                                 ; (v (car env))
-	    (append-instruction "SWAP")                  ; ((car env) v)
-	    (u-call-cons)                                ; ((v . (car env)))
-	    (append-instruction "RDRR")                  ; ((v . (car env)) env)
-	    (u-call-set-car)))                           ; () ; env is updated
-	  r)))
+    (begin
+      (append-instruction (string-append ";; Definition of " (car (cdr l))))
+      (let ((v (lookup-reference (car (cdr l)) env))
+	    (r (compile-sexp (car (cdr (cdr l))) env #t)))
+	(if v 
+	    (begin
+	      (assembly-env-cell (car v) (cdr v))
+	      (u-call-set-car))
+	    (begin
+	      (set-car! top-level-env (cons (car (cdr l)) (car top-level-env)))
+	      (append-instruction "RDRR")                  ; (v env)
+	      (u-call-car)                                 ; (v (car env))
+	      (append-instruction "SWAP")                  ; ((car env) v)
+	      (u-call-cons)                                ; ((v . (car env)))
+	      (append-instruction "RDRR")                  ; ((v . (car env)) env)
+	      (u-call-set-car)))                           ; () ; env is updated
+	r))))
 
 ; when we can detect application of a builtin
 ; we can avoid function call overhead and just inline the assembly
@@ -813,7 +812,8 @@
 	   "PUSH" string-type-flag
 	   "EQ"))
     (assembly-funret)
-
+	   
+    
     (append-instructions
      (list ":print_num,2" "@__initial_env" "@__print_num" ":__print_num"))
     (assembly-env-val 0 0)
@@ -1027,6 +1027,12 @@
     (u-call-car)                        ; (rval)
     (assembly-funret)
     
+    (append-instructions
+     (list ":eof_object_q,2" "@__initial_env" "@__eof_object_q" ":__eof_object_q"))
+    (assembly-env-val 0 0)
+    (append-instructions
+     (list "PUSH" "EOF" "EQ"))
+    (assembly-funret)
     )
   )
 	   
@@ -1043,7 +1049,10 @@
       ; each row here defines a cons box where the car
       ; is the closure cell for the builtin function, and 
       ; the cdr is the previous row (or nil)
-      ":__make_string_box,2"     "@make_string"     "@__nil"
+      ":__eof_object_q_box"      "@eof_object_q"    "@__nil"
+      ":__char_lt_box,2"         "@less_than"       "@__eof_object_q_box"
+      ":__char_eq_box,2"         "@equal"           "@__char_lt_box"
+      ":__make_string_box,2"     "@make_string"     "@__char_eq_box"
       ":__string_set_box,2"      "@string_set"      "@__make_string_box"
       ":__set_cdr_box,2"         "@set_cdr"         "@__string_set_box"
       ":__set_car_box,2"         "@set_car"         "@__set_cdr_box"
@@ -1094,7 +1103,8 @@
 	     (lambda () 
 	       (compiler-run) 
 	       r)))
-	  (append-instruction"END" )))))
+	  (begin
+	    (append-instruction "END"))))))
 
 
 ; Into the reader.  
@@ -1107,10 +1117,19 @@
 ; read-list reads sexps until the returned 'next-char' is a close peren, 
 ; then returns the list read, and the next non-whitespace character.
 ; reader utility functions
-(define is-space?     (lambda (c) (or (eof-object? c) (char=? c #\space ) (char=? c #\tab) (char=? c #\newline))))
-(define is-delimiter? (lambda (c) (or (is-space? c) (or (char=? c #\() (or (char=? c #\)) (or (char=? c #\") (char=? c #\; )))))))
-(define is-number?    (lambda (c) (and (char>=? c #\0) (char<=? c #\9))))
-(define is-char-name? (lambda (s) (or (string=? s "newline") (or (string=? s "space") (string=? s "tab")))))
+(define is-space?     (lambda (c) (if (eof-object? c) #t
+				      (if (char=? c #\space) #t
+					  (if (char=? c #\tab) #t
+					      (if (char=? c #\newline) #t #f))))))
+(define is-delimiter? (lambda (c) (if (is-space? c) #t
+				      (if (char=? c #\() #t
+					  (if (char=? c #\)) #t
+					      (if (char=? c #\") #t
+						  (if (char=? c #\; ) #t #f)))))))
+(define is-number?    (lambda (c) (if (char>=? c #\0) (char<=? c #\9) #f)))
+(define is-char-name? (lambda (s) (if (string=? s "newline") #t 
+				      (if (string=? s "space") #t
+					  (if (string=? s "tab") #t #f)))))
 
 (define drop-chars-until (lambda (f) (let ((x (read-char))) (if (f x) x (drop-chars-until f)))))
 (define next-non-ws      (lambda ()  (drop-chars-until (lambda (z) (not (is-space? z))))))
@@ -1136,9 +1155,10 @@
 
 (define reader-state-wordchar-helper
   (lambda (c)
-    (if (or (eof-object? c) (is-delimiter? c) ) (cons '() c)
-	(let ((r (reader-state-wordchar-helper (read-char))))
-	  (cons (cons c (car r)) (cdr r))))))
+    (if (eof-object? c) (cons '() c)
+	(if (is-delimiter? c) (cons '() c)
+	    (let ((r (reader-state-wordchar-helper (read-char))))
+	      (cons (cons c (car r)) (cdr r)))))))
 
 (define reader-state-wordchar
   (lambda (c) (let ((r (reader-state-wordchar-helper c)))
@@ -1199,15 +1219,15 @@
 				    (reader-state-semicolon (read-char))			     
 				    (reader-state-wordchar c)))))))))))
 
-(define look-ahead #f)
+(define look-ahead (cons #f '()))
 (define next-token
   (lambda ()
-    (let ((z (if look-ahead
-		 (reader-state-entrance look-ahead)
+    (let ((z (if (car look-ahead)
+		 (reader-state-entrance (car look-ahead))
 		 (reader-state-entrance (read-char)))))
       (if z
 	  (begin
-	    (set! look-ahead (cdr z))
+	    (set-car! look-ahead (cdr z))
 	    (car z))
 	  z))))
 

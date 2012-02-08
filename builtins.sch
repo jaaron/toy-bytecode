@@ -1,9 +1,27 @@
-(define newline (lambda () (print-char #\newline)))
-(define list?   (lambda (l) (or (null? l) (and (pair? l) (list? (cdr l))))))
-(define length  (lambda (l) (if (null? l) 0 (+ 1 (length (cdr l))))))
-(define map     (lambda (f l) (if (null? l) '() (cons (f (car l)) (cdr l)))))
-(define not     (lambda (x) (if x #f #t)))
+(define char<=?         (lambda (c1 c2) (if (char=? c1 c2) #t (char<? c1 c2))))
+(define char>?          (lambda (c1 c2) (char<? c2 c1)))
+(define char>=?         (lambda (c1 c2) (if (char=? c1 c2) #t (char<? c2 c1))))
+(define newline		(lambda () (print-char #\newline)))
+(define list?		(lambda (l) (if (null? l) #t 
+					(if (pair? l) (list? (cdr l)) #f))))
+(define length-helper	(lambda (l n) (if (null? l) n (length-helper (cdr l) (+ 1 n)))))
+(define length		(lambda (l) (length-helper l 0)))
+(define map		(lambda (f l) (if (null? l) '() (cons (f (car l)) (cdr l)))))
+(define not		(lambda (x) (if x #f #t)))
+(define reverse-helper	(lambda (l acc) (if (null? l) acc  (reverse-helper (cdr l) (cons (car l) acc)))))
+(define reverse		(lambda (l) (reverse-helper l nil)))
+(define revappend	(lambda (l1 l2)
+			  (if (null? l1) l2 (revappend (cdr l1) (cons (car l1 l2))))))
+(define append		(lambda (l1 l2) (revappend (reverse l1) l2)))
 
+(define sublist-helper  (lambda (l start end acc)
+			  (if (null? l) (reverse acc)
+			      (if (= end 0) (reverse acc)
+				  (if (= start 0)
+				      (sublist-helper (cdr l) 0 (- end 1) (cons (car l) acc))
+				      (sublist-helper (cdr l) (- start 1) (- end 1) nil))))))
+(define sublist         (lambda (l start end) (sublist-helper l start end nil)))
+(define substring       (lambda (s start end) (list->string (sublist (string->list s) start end))))
 (define display-list-body (lambda (l)
 			  (if (null? l) #t
 			      (begin
@@ -44,9 +62,21 @@
   (lambda (l)
       (list->string-helper (make-string (length l)) (length l) l)))
 
-(define reverse
-  (lambda (l acc)
-    (if (null? l) acc  (reverse (cdr l) (cons (car l) acc)))))
+(define string-append
+  (lambda (s1 s2) 
+    (list->string (append (string->list s1) (string->list s2)))))
+
+(define string=?-helper
+  (lambda (sl1 sl2)
+    (if (null? sl1)
+	(if (null? sl2) #t
+	    (if (not (char=? (car sl1) (car sl2))) #f
+		(string=?-helper (cdr sl1) (cdr sl2))))
+	(if (null? sl2) #f
+	    (string=?-helper (cdr sl1) (cdr sl2))))))
+
+
+(define string=? (lambda (s1 s2) (string=? (string->list s1) (string->list s2))))
 
 (define number->string-helper
   (lambda (n rest)
