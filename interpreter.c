@@ -73,15 +73,15 @@
 */
 
 #ifdef __GUARD_STACK__
-#define STACK(x) ({					\
-  int32_t __tmp = x;					\
-  if(__tmp > STACK_HEIGHT()){				\
-  fprintf(stderr, "Invalid stack access at %ld\n",	\
-	  pc-memory);					\
-  exit(-1);						\
-  }							\
-  *(sp + 1 + __tmp);					\
-    })
+#define STACK(x) ({							\
+	    int32_t __tmp = x;						\
+	    if(__tmp > STACK_HEIGHT()){					\
+		fprintf(stderr, "Invalid stack access at %ld\n",	\
+			pc-memory);					\
+		exit(-1);						\
+	    }								\
+	    *(sp + 1 + __tmp);						\
+	})
 
 #define STACK_POP() if(!STACK_HEIGHT()){			\
   fprintf(stderr, "Attempt to pop empty stack at %ld\n",	\
@@ -130,34 +130,10 @@
     fprintf(stream, "pc: %ld, hp: %ld sp: %p height: %ld\nstack:\n",	\
 	    pc-memory, hp-memory, sp, STACK_HEIGHT());			\
     while(q < STACK_HEIGHT() ){						\
-      switch(CELL_TYPE(STACK(q))){					\
-      case NUM:								\
-	  fprintf(stream, "\t%"PRId32" (%"PRIx32")\n",			\
-		  NUM_TO_NATIVE(STACK(q)), STACK(q));			\
-	break;								\
-      case VCONST:							\
-	if(IS_CHAR(STACK(q))){						\
-	  fprintf(stream,"\tchar: %c\n", CHAR_TO_NATIVE(STACK(q)));	\
-	}else if(IS_BOOL(STACK(q))){					\
-	  fprintf(stream, "\tbool: %c\n",				\
-		  STACK(q) == TRUE_VAL ? 'T' : 'F');			\
-	}else{								\
-	    fprintf(stream, "\tvc: %0"PRIx32"\n", STACK(q));		\
-	}								\
-	break;								\
-      case LCONST:							\
-	  fprintf(stream, "\tlc: %"PRId32"\n",				\
-		  NUM_TO_NATIVE(STACK(q)));				\
-	break;								\
-      case PTR:								\
-	fprintf(stream, "\tptr: %d sz: %d\n",				\
-		PTR_TARGET(STACK(q)), PTR_SIZE(STACK(q)));		\
-	break;								\
-      default:								\
-	  fprintf(stream, "\t(%1x)?: %0"PRIx32"\n",			\
-		  CELL_TYPE(STACK(q)), STACK(q) & (~(0x3 << 30)));	\
-      }									\
-      q++;								\
+	fprintf(stderr, "\t");						\
+	print_cell(stderr, STACK(q));					\
+	fprintf(stderr, "\n");						\
+	q++;								\
     }									\
   }while(0)
 
@@ -176,6 +152,7 @@
    opcodes and their index in the array is a nop.
 */
 #define IDX_FROM_INS(i) (i)
+
 
 #ifdef __TRACE__
 
@@ -531,6 +508,77 @@ void gc(int32_t *new_heap)
 	  heap_size - (hp - heap_base), hp - memory);
 #endif
 }
+
+static inline void print_cell(FILE *stream, int32_t c){
+    switch(CELL_TYPE(c)){
+      case NUM:
+	  fprintf(stream, "%"PRId32" (%"PRIx32")",
+		  NUM_TO_NATIVE(c), c);
+	break;
+      case VCONST:
+	if(IS_CHAR(c)){
+	  fprintf(stream,"char: %c", CHAR_TO_NATIVE(c));
+	}else if(IS_BOOL(c)){
+	  fprintf(stream, "bool: %c",
+		  c == TRUE_VAL ? 'T' : 'F');
+	}else{
+	    fprintf(stream, "vc: %0"PRIx32, c);
+	}
+	break;
+      case LCONST:
+	  fprintf(stream, "lc: %"PRId32,
+		  NUM_TO_NATIVE(c));
+	break;
+      case PTR:
+	fprintf(stream, "ptr: %d sz: %d",
+		PTR_TARGET(c), PTR_SIZE(c));
+	break;
+      default:
+	  fprintf(stream, "(%1x)?: %0"PRIx32,
+		  CELL_TYPE(c), c & (~(0x3 << 30)));
+      }
+}
+
+#ifdef __INSPECTOR__
+static inline void inspector(void){
+    int  cmd;
+    while( ((cmd = getchar()) != '\n')){
+	switch(cmd){
+	case 'c': while(getchar() != '\n'); return;
+	case 'p': {
+	    int addr;
+	    scanf("%d", &addr); 
+	    while(getchar()!='\n');
+	    fprintf(stderr, "%d:\t", addr);
+	    print_cell(stderr, memory[addr]);
+	    fprintf(stderr, "\n");
+	} break;
+	case 's': {
+	    int offset;
+	    scanf("%d", &offset); 
+	    while(getchar()!='\n');
+	    fprintf(stderr, "STACK(%d):\t", offset);
+	    print_cell(stderr, STACK(offset));
+	    fprintf(stderr, "\n");
+	} break;
+	case 'r': {
+	    while(getchar()!='\n');
+	    fprintf(stderr, "RR:\t");
+	    print_cell(stderr, rr);
+	    fprintf(stderr, "\n");
+	} break;
+	default: while(getchar()!='\n');
+	    fprintf(stderr, 
+		    "Unknown command '%c':\n"
+		    "\tc\tcontinue\n"
+		    "\tp <addr>\tprint address\n"
+		    "\ts <off>\tprint stack value\n"
+		    "\tr\tprint root register\n", cmd);
+	    break;
+	}
+    }
+}
+#endif
 
 /* 
    Ok, we're done with the quick and dirty garbage collector.  Let's
