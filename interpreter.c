@@ -9,11 +9,6 @@
 
    I think the coolest area of research right now is in JIT (just in
    time) compilers.  But first, let's write an interpreter.
-
-   This post is in good old fashioned C.  The complete source code for
-   the interpreter, an assembler, a pretty hackish compiler, and some
-   examples can be downloaded from 
-   http://aaron.13th-floor.org/src/bytecode.tgz
 */
 
 /* First we include a number of standard C headers.  Nothing
@@ -33,14 +28,12 @@
    used by the interpreter.  The types are: integers, pointers, vm
    constants, and language constants.  
 
-   All types used by the VM fit in a 32 bit word (throughout the code
-   we assume native word size is 32 bits.  porting to 64 bits is left
-   as an exercise to the reader), the top two bits are reserved for
-   flags used to identify the type of the word.
+   All types used by the VM fit in a 32 bit word the top two bits are
+   reserved for flags used to identify the type of the word.
 
-   Pointers are are packed to include a 15 bit size field, and a 15
+   Pointers are packed to include a 18 bit size field, and a 12
    bit location pointer (the total memory size is also defined in
-   interpreter.h to be 8192).
+   interpreter.h to be 2^18 = 256k).
 
    VM constants include instructions, characters, and the boolean
    values true and false.  
@@ -53,6 +46,25 @@
 #include "interpreter.h"
 
 /* 
+   First we'll define some macros for checking and unpacking the
+   different VM types.  The corresponding packers are defined in the
+   interpreter.h header file.
+*/
+#define PTR_TARGET(x)        (((unsigned int)x) & PTR_TARGET_MASK)
+#define PTR_SIZE(x)          ((((unsigned int)x) >> PTR_TARGET_BITS) & PTR_SIZE_MASK)
+#define NUM_TO_NATIVE(x)     ((typeof(x))((((int)x) << FLAG_BITS) >> FLAG_BITS))
+#define CHAR_TO_NATIVE(x)    ((char)((x) & 0xff))
+#define CELL_TYPE(x)         (((unsigned int)x) & FLAG_MASK)
+#define IS_NUM(x)            (CELL_TYPE(x) == NUM)
+#define IS_PTR(x)            (CELL_TYPE(x) == PTR)
+#define IS_LCONST(x)         (CELL_TYPE(x) == LCONST)
+#define IS_VCONST(x)         (CELL_TYPE(x) == VCONST)
+#define IS_CONST(x)          (IS_LCONST(x)  || IS_VCONST(x))
+#define IS_BOOL(x)           (x == TRUE_VAL || x == FALSE_VAL)
+#define IS_CHAR(x)           (IS_VCONST(x) && ((x) & CHAR_FLAG) == CHAR_FLAG)
+#define IS_INS(x)            (IS_VCONST(x) && ( (x) < NR_INS))
+
+/* 
    Our interpreter will be a basic stack machine.  Memory consists of
    a large array with the stack at the top growing down, the static
    code is at the bottom, then two heaps (one live, and one dead used
@@ -61,36 +73,37 @@
    stack space (depending on which heap is live) at which point the
    garbage collector is invoked.
 */
+static int32_t memory[MEM_SIZE];          /* all of memory */
 
-/*
-   Sidenote: if you download the tarball from my website you'll notice
-   a number of different definitions of the following macros that can
-   be selected using various preprocessor defines.  These include
-   versions that do additional bounds checking on stack
-   access/allocation, and dumping VM status after each instruction.
-   For the sake of brevity (well, relative brevity) I'm only including
-   the basic versions in this post.
-*/
+static int32_t *sp = &memory[MEM_SIZE-1]; /* The top 256 words of memory
+					     are reserved for the stack */
 
-#ifdef __GUARD_STACK__
-#define STACK(x) ({							\
-	    int32_t __tmp = x;						\
-	    if(__tmp > STACK_HEIGHT()){					\
-		fprintf(stderr, "Invalid stack access at %ld\n",	\
-			pc-memory);					\
-		exit(-1);						\
-	    }								\
-	    *(sp + 1 + __tmp);						\
-	})
+static int32_t *prog_end;                 /* pointer to the end of the
+					     loaded program text */
 
-#define STACK_POP() if(!STACK_HEIGHT()){			\
-  fprintf(stderr, "Attempt to pop empty stack at %ld\n",	\
-	  pc-memory);						\
-  }else{							\
-  ++sp;								\
-  }
+static int32_t *pc = memory;              /* the program counter */
 
-#else
+static int32_t heap_size;                 /* maximum size of a heap
+					     (computed based on
+					     prog_end) */
+
+static int32_t *upper_heap;               /* upper_heap == prog_end + heap_size; */
+
+static int32_t *heap_base;                /* pointer to the first cell of
+					     the heap, Should always be
+					     either prog_end, or
+					     upper_head. */
+				       
+static int32_t *hp;                       /* the heap pointer. */
+
+static int32_t  rr = MAKE_NUM(0);         /* the root regiseter can be
+					     used by the language to
+					     store an additional root for
+					     gc (anything on the stack is
+					     also treated as a root).
+					     The intended use is as a
+					     pointer to a structure
+					     containing local variables. */
 
 /* 
    Access the element at offset x from the top of the stack.  (0 is
@@ -104,8 +117,6 @@
    that accesses the current sp.
 */
 #define STACK_POP() *( ++sp )
-
-#endif
 
 /* 
    Pushing an element on the stack.  Like popping this changes the
@@ -121,8 +132,43 @@
 	*sp = __tmp;						\
 	sp--;							\
     }while(0)
+
+/* The current height of the stack. */
 #define STACK_HEIGHT() ((memory + MEM_SIZE-1) - sp)
 
+/*
+  Function for generically printing the contents of a cell. 
+  Used by the DO_DUMP macro below, and the inspector 
+*/
+static inline void print_cell(FILE *stream, int32_t c){
+    switch(CELL_TYPE(c)){
+      case NUM:
+	  fprintf(stream, "%"PRId32" (%"PRIx32")",
+		  NUM_TO_NATIVE(c), c);
+	break;
+      case VCONST:
+	if(IS_CHAR(c)){
+	  fprintf(stream,"char: %c", CHAR_TO_NATIVE(c));
+	}else if(IS_BOOL(c)){
+	  fprintf(stream, "bool: %c",
+		  c == TRUE_VAL ? 'T' : 'F');
+	}else{
+	    fprintf(stream, "vc: %0"PRIx32, c);
+	}
+	break;
+      case LCONST:
+	  fprintf(stream, "lc: %"PRId32,
+		  NUM_TO_NATIVE(c));
+	break;
+      case PTR:
+	fprintf(stream, "ptr: %d sz: %d",
+		PTR_TARGET(c), PTR_SIZE(c));
+	break;
+      default:
+	  fprintf(stream, "(%1x)?: %0"PRIx32,
+		  CELL_TYPE(c), c & (~(0x3 << 30)));
+      }
+}
 
 /* 
    The following macro is used to dump the current machine state (pc,
@@ -159,23 +205,7 @@
 #define IDX_FROM_INS(i) (i)
 
 
-#ifdef __TRACE__
-
-#define NEXT do{						\
-    fprintf(stderr,"==================================\n");	\
-    fprintf(stderr,"initial pc: %ld instruction: %"PRId32" ",	\
-	    pc-memory, IDX_FROM_INS(*pc));			\
-    goto *instructions[IDX_FROM_INS(*pc++)];			\
-  }while(0)
-
-#define INSTRUCTION(n,x)			\
-  n:						\
-  fprintf(stderr, #n "\n");			\
-  x;						\
-  DO_DUMP(stderr);				\
-  NEXT
-
-#else 
+#ifndef __TRACE__
 
 /* 
    The cool thing about indirect threaded dispatching is that
@@ -202,6 +232,29 @@
   n:						\
   x;						\
   NEXT
+
+#else
+
+/* 
+    For debugging purpose it's convenient to be able to spit out a
+    trace of every instruction as it is executed.  To do this, we just
+    define NEXT and INSTRUCTION to print the trace info.  This is
+    built using the trace-compiler target in the Makefile.
+*/
+#define NEXT do{						\
+    fprintf(stderr,"==================================\n");	\
+    fprintf(stderr,"initial pc: %ld instruction: %"PRId32" ",	\
+	    pc-memory, IDX_FROM_INS(*pc));			\
+    goto *instructions[IDX_FROM_INS(*pc++)];			\
+  }while(0)
+
+#define INSTRUCTION(n,x)			\
+  n:						\
+  fprintf(stderr, #n "\n");			\
+  x;						\
+  DO_DUMP(stderr);				\
+  NEXT
+
 #endif
 
 /* 
@@ -210,26 +263,7 @@
    these to help optimize type assertions in the interpreter.
 */
 #define unlikely(x)     __builtin_expect((x),0)
-#define likely(x)     __builtin_expect((x),1)
-
-/* 
-   Now come a series of macros for checking and unpacking the
-   different VM types.  The corresponding packers are defined in the
-   interpreter.h header file.
-*/
-#define PTR_TARGET(x)        (((unsigned int)x) & PTR_TARGET_MASK)
-#define PTR_SIZE(x)          ((((unsigned int)x) >> PTR_TARGET_BITS) & PTR_SIZE_MASK)
-#define NUM_TO_NATIVE(x)     ((typeof(x))((((int)x) << 2) >> 2))
-#define CHAR_TO_NATIVE(x)    ((char)((x) & 0xff))
-#define CELL_TYPE(x)         (((unsigned int)x) & (0x3 << 30))
-#define IS_NUM(x)            (CELL_TYPE(x) == NUM)
-#define IS_PTR(x)            (CELL_TYPE(x) == PTR)
-#define IS_LCONST(x)         (CELL_TYPE(x) == LCONST)
-#define IS_VCONST(x)         (CELL_TYPE(x) == VCONST)
-#define IS_CONST(x)          (IS_LCONST(x)  || IS_VCONST(x))
-#define IS_BOOL(x)           (x == TRUE_VAL || x == FALSE_VAL)
-#define IS_CHAR(x)           (IS_VCONST(x) && ((x) & CHAR_FLAG) == CHAR_FLAG)
-#define IS_INS(x)            (IS_VCONST(x) && ( (x) < NR_INS))
+#define likely(x)       __builtin_expect((x),1)
 
 #define ASSERT_TYPE(x,t)     if(unlikely(CELL_TYPE(x) != t)){TYPE_ERROR(t);}
 #define ASSERT_NOT_TYPE(x,t) if(unlikely(CELL_TYPE(x) == t)){TYPE_ERROR(!t);}
@@ -242,11 +276,11 @@
 */
 #define HEAP_CHECK(n) do{					\
     long __tmp = n;						\
-    if(hp + __tmp >= heap_base + heap_size){			\
+    if(unlikely(hp + __tmp >= heap_base + heap_size)){		\
       heap_base = (heap_base == prog_end ?			\
 		   upper_heap : prog_end);			\
       gc(heap_base);						\
-      if(hp + __tmp >= heap_base + heap_size){			\
+      if(unlikely(hp + __tmp >= heap_base + heap_size)){	\
 	fprintf(stderr, "Unable to allocate memory!\n");	\
 	exit(-ENOMEM);						\
       }								\
@@ -264,42 +298,6 @@
     DO_DUMP(stderr);						\
     exit(-1);							\
   }while(0);
-
-static int32_t memory[MEM_SIZE];          /* all of memory */
-
-static int32_t *sp = &memory[MEM_SIZE-1]; /* The top 256 words of memory
-					  are reserved for the stack */
-
-static int32_t *prog_end;                 /* pointer to the end of the
-					  loaded program text */
-
-static int32_t *pc = memory;              /* the program counter */
-
-static int32_t heap_size;                 /* maximum size of a heap
-					  (computed based on
-					  prog_end) */
-
-static int32_t *upper_heap;               /* upper_heap == prog_end + heap_size; */
-
-static int32_t *heap_base;                /* pointer to the first cell of
-					  the heap, Should always be
-					  either prog_end, or
-					  upper_head. */
-				       
-static int32_t *hp;                       /* the heap pointer. */
-
-static int32_t  rr = MAKE_NUM(0);         /* the root regiseter can be
-					  used by the language to
-					  store an additional root for
-					  gc (anything on the stack is
-					  also treated as a root).
-					  The intended use is as a
-					  pointer to a structure
-					  containing local variables. */
-
-#ifdef __STATS__
-static int32_t max_alloc = 0;
-#endif
 
 /* 
    The garbage collector is a basic stop and copy collector.  It
@@ -514,37 +512,11 @@ void gc(int32_t *new_heap)
 #endif
 }
 
-static inline void print_cell(FILE *stream, int32_t c){
-    switch(CELL_TYPE(c)){
-      case NUM:
-	  fprintf(stream, "%"PRId32" (%"PRIx32")",
-		  NUM_TO_NATIVE(c), c);
-	break;
-      case VCONST:
-	if(IS_CHAR(c)){
-	  fprintf(stream,"char: %c", CHAR_TO_NATIVE(c));
-	}else if(IS_BOOL(c)){
-	  fprintf(stream, "bool: %c",
-		  c == TRUE_VAL ? 'T' : 'F');
-	}else{
-	    fprintf(stream, "vc: %0"PRIx32, c);
-	}
-	break;
-      case LCONST:
-	  fprintf(stream, "lc: %"PRId32,
-		  NUM_TO_NATIVE(c));
-	break;
-      case PTR:
-	fprintf(stream, "ptr: %d sz: %d",
-		PTR_TARGET(c), PTR_SIZE(c));
-	break;
-      default:
-	  fprintf(stream, "(%1x)?: %0"PRIx32,
-		  CELL_TYPE(c), c & (~(0x3 << 30)));
-      }
-}
-
-#ifdef __INSPECTOR__
+/* 
+   Ok, we're done with the quick and dirty garbage collector.  Before
+   we implement the interpreter itself, we'll do a little interactive
+   inspector. Someday, maybe we'll add breakpointing support.
+*/
 static inline void inspector(void){
     int  cmd;
     while( ((cmd = getchar()) != '\n')){
@@ -583,52 +555,45 @@ static inline void inspector(void){
 	}
     }
 }
-#endif
 
-/* 
-   Ok, we're done with the quick and dirty garbage collector.  Let's
-   actually implement the interpreter!
-*/
 int main(int argc, char *argv[])
 {
-  /* The long awaited array of instructions!  It is imperative that
-     these appear in the order specified in interpreter.h */
-  static long instructions[] = {
-    (long)&&PUSH, (long)&&POP,
-    (long)&&SWAP, (long)&&DUP, 
-    (long)&&ROT,
+    /* The long awaited array of instructions! */
+    static long instructions[] = {
+	[I_PUSH]	= (long)&&PUSH,  [I_POP]  = (long)&&POP,
+	[I_SWAP]	= (long)&&SWAP,  [I_DUP]  = (long)&&DUP, 
+	[I_ROT]		= (long)&&ROT,
 
-    /* Control flow */
-    (long)&&CALL,
-    (long)&&RET,   (long)&&JMP,  
-    (long)&&JTRUE, (long)&&END,
+	/* Control flow */
+	[I_CALL]	= (long)&&CALL,
+	[I_RET]		= (long)&&RET,   [I_JMP]  = (long)&&JMP,  
+	[I_JTRUE]	= (long)&&JTRUE, [I_END]  = (long)&&END,
     
-    /* Arithmetic */
-    (long)&&PLUS, (long)&&MUL, 
-    (long)&&SUB,  (long)&&DIV,
-    (long)&&MOD,  (long)&&SHL,  
-    (long)&&SHR,  (long)&&BOR,  
-    (long)&&BAND,
+	/* Arithmetic */
+	[I_ADD] 	= (long)&&PLUS,  [I_MUL]  = (long)&&MUL, 
+	[I_SUB]		= (long)&&SUB,   [I_DIV]  = (long)&&DIV,
+	[I_MOD]		= (long)&&MOD,   [I_SHL]  = (long)&&SHL,  
+	[I_SHR]		= (long)&&SHR,   [I_BOR]  = (long)&&BOR,  
+	[I_BAND]	= (long)&&BAND,
     
-    /* Comparison */
-    (long)&&EQ,   (long)&&LT,
+	/* Comparison */
+	[I_EQ]		= (long)&&EQ,    [I_LT]   = (long)&&LT,
 
-    /* Reading and writing memory */
-    (long)&&STOR, (long)&&LOAD, (long)&&ALOC,
+	/* Reading and writing memory */
+	[I_STOR]	= (long)&&STOR,  [I_LOAD] = (long)&&LOAD, [I_ALOC] = (long)&&ALOC,
     
-    /* I/0 */
-    (long)&&GETC, (long)&&DUMP, 
-    (long)&&PINT, (long)&&PCHR,
+	/* I/0 */
+	[I_GETC]	= (long)&&GETC,  [I_DUMP] = (long)&&DUMP, 
+	[I_PINT]	= (long)&&PINT,  [I_PCHR] = (long)&&PCHR,
 
-    /* Root Register manipulation */
-    (long)&&RDRR, (long)&&WTRR,
+	/* Root Register manipulation */
+	[I_RDRR]	= (long)&&RDRR,  [I_WTRR] = (long)&&WTRR,
 
-    /* Type checking */
-    (long)&&ISNUM, (long)&&ISLCONST,
-    (long)&&ISPTR, (long)&&ISBOOL,
-    (long)&&ISCHR, (long)&&ISINS
-  };
-
+	/* Type checking */
+	[I_ISNUM]	= (long)&&ISNUM, [I_ISLCONST] = (long)&&ISLCONST,
+	[I_ISPTR]	= (long)&&ISPTR, [I_ISBOOL]   = (long)&&ISBOOL,
+	[I_ISCHR]	= (long)&&ISCHR, [I_ISINS]    = (long)&&ISINS
+    };
 
   /* We first do some basic startup stuff to load the program */
   int fd;
@@ -656,10 +621,10 @@ int main(int argc, char *argv[])
   heap_size  = (MEM_SIZE - STACK_SIZE - nread)/2;
   upper_heap = hp + heap_size;
 
-  /* The assembler (included in the tarball) outputs everything in
-     network byte order (my main desktop is PPC) so sweep through and
-     fix everything for the native machine.  We could skip this on
-     PPC. 
+  /* 
+     The assembler (included in the tarball) outputs everything in
+     network byte order so sweep through and fix everything for the
+     native machine.
   */
   for(; nread > 0 ; nread--){
     memory[nread-1] = ntohl(memory[nread-1]);
@@ -741,9 +706,6 @@ int main(int argc, char *argv[])
   /* END is used to stop the interpreter, just exit the main
      routine. */
   INSTRUCTION(END, 
-#ifdef __STATS__
-	      fprintf(stderr, "max_alloc = %d\n", max_alloc);
-#endif
 	      return 0);
 
   /* arithmetic */
@@ -873,11 +835,6 @@ int main(int argc, char *argv[])
       __tmp = MAKE_PTR(hp - memory, NUM_TO_NATIVE(STACK(0)));
       hp += NUM_TO_NATIVE(STACK(0));
       STACK(0) = __tmp;
-#ifdef __STATS__
-      if(hp - heap_base > max_alloc){
-	max_alloc = hp - heap_base;
-      }
-#endif
     }while(0));
   
   /* I/O */
