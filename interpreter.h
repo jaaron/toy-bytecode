@@ -13,7 +13,7 @@
 #define MAKE_CHAR(x)   (CHAR_FLAG | (x & 0x007fffff))
 #define MAKE_NUM(x)    ((x & ~NUM) | NUM)
 
-#define PTR_SIZE_SHIFT  16
+#define PTR_SIZE_SHIFT  17
 #define PTR_SIZE_MASK   ((1<<(30 - PTR_SIZE_SHIFT))-1)
 #define PTR_TARGET_MASK ((1<<PTR_SIZE_SHIFT)-1)
 #define MAKE_PTR(x,sz) (PTR | (((sz) & PTR_SIZE_MASK) << PTR_SIZE_SHIFT) | (x & PTR_TARGET_MASK))

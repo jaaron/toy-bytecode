@@ -6,7 +6,8 @@
 					(if (pair? l) (list? (cdr l)) #f))))
 (define length-helper	(lambda (l n) (if (null? l) n (length-helper (cdr l) (+ 1 n)))))
 (define length		(lambda (l) (length-helper l 0)))
-(define map		(lambda (f l) (if (null? l) (quote ()) (cons (f (car l)) (cdr l)))))
+(define map-helper      (lambda (f l ll) (if (null? l) (reverse ll) (map-helper f (cdr l) (cons (f (car l)) ll)))))
+(define map		(lambda (f l) (map-helper f l (quote ()))))
 (define not		(lambda (x) (if x #f #t)))
 (define reverse-helper	(lambda (l acc) (if (null? l) acc  (reverse-helper (cdr l) (cons (car l) acc)))))
 (define reverse		(lambda (l) (reverse-helper l nil)))
@@ -85,15 +86,15 @@
 
 (define string=?-helper
   (lambda (sl1 sl2)
-    (if (null? sl1)
-	(if (null? sl2) #t
-	    (if (not (char=? (car sl1) (car sl2))) #f
-		(string=?-helper (cdr sl1) (cdr sl2))))
-	(if (null? sl2) #f
-	    (string=?-helper (cdr sl1) (cdr sl2))))))
+    (if (if (null? sl1) (null? sl2) #f) 
+	#t ;; both are null
+	(if (null? sl2) #f ;; sl2 is null, sl1 isn't
+	    (if (null? sl1) #f ;; sl1 is null, sl2 isn't
+		(if (char=? (car sl1) (car sl2)) 
+		    (string=?-helper (cdr sl1) (cdr sl2))
+		    #f))))))
 
-
-(define string=? (lambda (s1 s2) (string=? (string->list s1) (string->list s2))))
+(define string=? (lambda (s1 s2) (string=?-helper (string->list s1) (string->list s2))))
 
 (define digit-to-char 
   (lambda (d)
@@ -106,13 +107,22 @@
 			    (if (= d 6) #\6
 				(if (= d 7) #\7
 				    (if (= d 8) #\8
-					(if (= d 9) #\9 #f))))))))))))
+					(if (= d 9) #\9 
+					    (begin 
+					      (display "Error: '")
+					      (display d)
+					      (display "' is not a digit!\n")
+					      (quit))))))))))))))
 (define number->string-helper
   (lambda (n rest)
     (if (= n 0)
-	(list->string (reverse rest))
+	(list->string rest)
 	(number->string-helper (/ n 10) (cons (digit-to-char (% n 10)) rest)))))
 
 (define number->string
-  (lambda (n) (number->string-helper n)))
+  (lambda (n) 
+	  (if (= n 0) "0"
+	      (if (< 0 n) 
+		  (number->string-helper n nil)
+		  (string-append "-" (number->string-helper (* n -1) nil))))))
     

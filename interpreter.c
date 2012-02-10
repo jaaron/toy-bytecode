@@ -358,7 +358,7 @@ void gc(int32_t *new_heap)
     work++;
     if(&memory[PTR_TARGET(rr)] >= prog_end){
 #ifdef __GC_DEBUG__
-      fprintf(stderr, "Copying target of root register %d -> %d (sz: %d)\n",
+      fprintf(stderr, "Copying target of root register %d -> %ld (sz: %d)\n",
 	      PTR_TARGET(rr), hp - memory, PTR_SIZE(rr));
 #endif
       rr = mappings[PTR_TARGET(rr)] = MAKE_PTR(hp-memory, PTR_SIZE(rr));
@@ -385,7 +385,7 @@ void gc(int32_t *new_heap)
 	work++;
 	if(&memory[PTR_TARGET(STACK(i))] >= prog_end){
 #ifdef __GC_DEBUG__
-	  fprintf(stderr, "Copying pointer in cell STACK(%d) from %d -> %d (sz: %d)\n",
+	  fprintf(stderr, "Copying pointer in cell STACK(%d) from %d -> %ld (sz: %d)\n",
 		  i, PTR_TARGET(STACK(i)), hp - memory, PTR_SIZE(STACK(i)));
 #endif
 	  STACK(i) = mappings[PTR_TARGET(STACK(i))] = MAKE_PTR(hp-memory, PTR_SIZE(STACK(i)));
@@ -433,7 +433,7 @@ void gc(int32_t *new_heap)
 	    fprintf(stderr, 
 		    "While copying ptr: %d -> %d (sz: %d) offset %d is a fresh pointer.\n"
 		    "\tOriginal: %d sz: %d\n"
-		    "\tFresh:    %d\n",
+		    "\tFresh:    %ld\n",
 		    PTR_TARGET(tmp),
 		    PTR_TARGET(mappings[PTR_TARGET(tmp)]),
 		    PTR_SIZE(tmp),
@@ -504,7 +504,7 @@ void gc(int32_t *new_heap)
 
 #ifdef __GC_DEBUG__
   memset(new_heap == upper_heap ? prog_end : upper_heap, 0xabababab, heap_size*sizeof(int32_t));
-  fprintf(stderr, "After gc %d cells available (hp = %d)\n",
+  fprintf(stderr, "After gc %ld cells available (hp = %ld)\n",
 	  heap_size - (hp - heap_base), hp - memory);
 #endif
 }

@@ -4,6 +4,12 @@
 				   (if (f (car l))
 				       (for-all? f (cdr l)) #f))))
 
+(define last (lambda (l) (if (null? l) l 
+			     (if (not (pair? l)) l 
+				 (if (not (pair? (cdr l))) l 
+				     (if (null? (cdr l)) l
+					 (last (cdr l))))))))
+
 ; check if a string represents a numeric constant.
 ; i.e., the string "123" is numeric
 (define is-numeric? (lambda (str)
@@ -150,6 +156,8 @@
 	   ("char<?"		 "char_less_than_box"    "less_than") ;; for characters
 	   ("eof-object?"	 "eof_object_q_box"	 "eof_object_q")))))
 
+(define top-level-env-endptr (list (last (car top-level-env))))
+
 (define initial-env-label "__initial_environment")
 
 (define append-named-consbox
@@ -166,17 +174,16 @@
 
 (define append-initial-env-helper
   (lambda (l prev-label)
-    (if (null? l) prev-label	
+    (if (null? l) 
+	prev-label	
 	(let ((this (car l)))
 	  (let ((scheme-name (car this)) ;; ignored
 		(box-name    (car (cdr this)))
 		(box-val     (car (cdr (cdr this)))))
-	  (append-initial-env-helper 
-	   (cdr l) 
-	   (append-named-consbox box-name
-	    (string-append (asm-label-reference box-val))
-	    (string-append (asm-label-reference prev-label)))
-	   ))))))
+	    (append-named-consbox box-name
+				  (asm-label-reference box-val)
+				  (asm-label-reference prev-label))
+	    (append-initial-env-helper (cdr l) box-name))))))
 
 (define append-initial-env
   (lambda ()
@@ -186,7 +193,7 @@
     (append-named-consbox
      initial-env-label
      (asm-label-reference
-      (append-initial-env-helper (car top-level-env) "__nil"))
+      (append-initial-env-helper (reverse (car top-level-env)) "__nil"))
      (asm-label-reference "__nil"))))
 
 ; (fresh-label) is used to generate labels for each lambda 
@@ -416,7 +423,7 @@
 	    (lookup-top-level-reference-offset-helper (cdr l) r (+ n 1))))))
 
 (define lookup-top-level-reference-offset
-  (lambda (r) (lookup-top-level-reference-offset-helper (reverse (car top-level-env)) r 0)))
+  (lambda (r) (lookup-top-level-reference-offset-helper (car top-level-env) r 0)))
 
 (define lookup-reference 
   (lambda (r e)
@@ -473,16 +480,18 @@
      (list "PUSH" 	   
 	   (string-append "'" 
 			  (string-append
-			   (if (string=? s "#\\newline")
-			       "\\n" 
-			       (if (string=? s "#\\\\")
-				   "\\\\"
-				   (if (string=? s "#\\'")
-				       "\\'"
-				       (if (string=? s "#\\\"") "\\\""
-					   (if (string=? s "#\\space")
-					       " "
-					       (substring s 2 3)))))) 
+			   (if (string=? s "#\\tab") 
+			       "\\t"
+			       (if (string=? s "#\\newline")
+				   "\\n" 
+				   (if (string=? s "#\\\\")
+				       "\\\\"
+				       (if (string=? s "#\\'")
+					   "\\'"
+					   (if (string=? s "#\\\"") "\\\""
+					       (if (string=? s "#\\space")
+						   " "
+						   (substring s 2 3))))))) 
 			   "'")))) #f))
 
 (define compile-reference 
@@ -497,7 +506,9 @@
 	  (begin
 	    ;; this should really write to stderr.
 	    (display (string-append "Undefined symbol: " 
-				    (string-append r "\n")))
+				    (string-append r "\n Environment is: ")))
+	    (display env)(display top-level-env)
+	    (newline)
 	    (quit))
 	  )
       #f
@@ -544,8 +555,9 @@
 	(begin 
 	  (assembly-nil)
 	  #f)
-	(let ((r1 (compile-let-bindings (cdr bs) env))
-	      (r2 (compile-sexp (car (cdr (car bs))) env #t)))
+	(let ((r2 (compile-sexp (car (cdr (car bs))) env #t))
+	      (r1 (compile-let-bindings (cdr bs) env)))
+	  (append-instruction "SWAP")
 	  (u-call-cons)
 	  (lambda ()
 	    (do-compile-task r1)
@@ -611,8 +623,10 @@
 	      (u-call-set-car))
 	    (begin
 	      (append-instruction  (string-append ";; Setting binding " (car (cdr l))))
-	      (set-car! top-level-env (cons (list (car (cdr l)) label "__nil")
-					    (car top-level-env)))
+	      (set-cdr! (car top-level-env-endptr)
+			(cons (list (car (cdr l)) label "__nil")
+			      (cdr (car top-level-env-endptr))))
+	      (set-car! top-level-env-endptr (cdr (car top-level-env-endptr)))
 	      (append-instructions (list "PUSH" 
 					 (asm-label-reference label)
 					 "PUSH"
@@ -678,8 +692,9 @@
   (lambda (l env)
     (if (null? l) 
 	(begin (assembly-nil) #f)
-	(let ((r1 (compile-arguments (cdr l) env))
-	      (r2 (compile-sexp (car l) env #t)))
+	(let ((r2 (compile-sexp (car l) env #t))
+	      (r1 (compile-arguments (cdr l) env)))
+	  (append-instruction "SWAP")
 	  (u-call-cons)
 	  (lambda () 
 	    (do-compile-task r1)
@@ -871,8 +886,8 @@
 			      initial-env-ref
 			      (asm-label-reference "__less_than"))
 	(append-instruction (asm-label-definition "__less_than"))
-	(assembly-env-val 0 0)
 	(assembly-env-val 0 1)
+	(assembly-env-val 0 0)
 	(append-instruction "LT")
 	(assembly-funret))
       
@@ -883,6 +898,7 @@
 			      (asm-label-reference "__set_car"))
 	(append-instruction (asm-label-definition "__set_car"))
 	(assembly-env-val 0 1)
+	(append-instruction "DUP")
 	(assembly-env-val 0 0)
 	(u-call-set-car)
 	(assembly-funret))
@@ -893,6 +909,7 @@
 			      (asm-label-reference "__set_cdr"))
 	(append-instruction (asm-label-definition "__set_cdr"))
 	(assembly-env-val 0 1)
+	(append-instruction "DUP")
 	(assembly-env-val 0 0)
 	(u-call-set-cdr)
 	(assembly-funret))
@@ -1193,10 +1210,10 @@
 	(assembly-funret))
       
       (begin 
-	(append-named-consbox "eof_object" initial-env-ref 
-			      (asm-label-reference "eof_object_q"))
+	(append-named-consbox "eof_object_q" initial-env-ref 
+			      (asm-label-reference "__eof_object_q"))
 	(append-instruction 
-	 (asm-label-definition "eof_object_q"))
+	 (asm-label-definition "__eof_object_q"))
 	(assembly-env-val 0 0)
 	(append-instructions
 	 (list "PUSH" "EOF" "EQ"))
@@ -1250,10 +1267,28 @@
 
 (define reader-state-hash-backslash 
   (lambda (c)
-    (if (is-delimiter? c)
-	(cons (string-append "#\\" (make-string 1 c)) (read-char))
-	(let ((r (reader-state-wordchar c)))
-	  (cons (string-append "#\\" (car r)) (cdr r))))))
+    (if (char=? c #\space)
+	(cons "#\\space" (read-char))
+	(if (char=? c #\tab)
+	    (cons "#\\tab" (read-char))
+	    (if (char=? c #\newline)
+		(cons "#\\newline" (read-char))
+		(if (char=? c #\()
+		    (cons "#\\(" (read-char))
+		    (if (char=? c #\))
+			(cons "#\\)" (read-char))
+			(if (char=? c #\")
+			    (cons "#\\\"" (read-char))
+			    (if (char=? c #\;)
+				(cons "#\\;" (read-char))
+				(let ((r (reader-state-wordchar c)))
+				  (cons (string-append "#\\" (car r)) (cdr r))))))))))))
+;; (define reader-state-hash-backslash 
+;;   (lambda (c)
+;;     (if (is-delimiter? c)
+;; 	(cons (string-append "#\\" (make-string 1 c)) (read-char))
+;; 	(let ((r (reader-state-wordchar c)))
+;; 	  (cons (string-append "#\\" (car r)) (cdr r))))))
 
 (define reader-state-hash
   (lambda (c)
@@ -1341,7 +1376,7 @@
 		 (reader-state-entrance (read-char)))))
       (if z
 	  (begin
-	    (set-car! look-ahead (cdr z))
+	    (set-car! look-ahead (cdr z))	    
 	    (car z))
 	  z))))
 
