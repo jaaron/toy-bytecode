@@ -17,9 +17,9 @@
 (define map-helper      (lambda (f l ll) (if (null? l) (reverse ll) (map-helper f (cdr l) (cons (f (car l)) ll)))))
 (define map		(lambda (f l) (map-helper f l (quote ()))))
 
-(define foldl-string    (lambda (f seed s start end)
+(define string-fold     (lambda (f seed s start end)
 			  (if (>= start end) seed
-			      (foldl-string f (f seed (string-ref s start)) 
+			      (string-fold f (f (string-ref s start) seed) 
 					    s (+ start 1) end))))
 
 (define sublist-helper  (lambda (l start end acc)
@@ -31,7 +31,7 @@
 (define sublist         (lambda (l start end) (sublist-helper l start end nil)))
 
 (define copy-into-string (lambda (dest dest-offset src src-offset src-end)
-			   (foldl-string (lambda (loc c)
+			   (string-fold (lambda (c loc)
 					   (string-set! dest loc c)
 					   (+ loc 1))
 					 dest-offset src src-offset src-end)
@@ -64,8 +64,8 @@
 
 (define display-string 
   (lambda (s) 
-    (foldl-string 
-     (lambda (x c) (display c))
+    (string-fold
+     (lambda (c x) (display c))
      nil s 0 (string-length s))))
 
 (define display (lambda (x)

@@ -28,7 +28,7 @@ schemer-bootstrap.bytecode: assembler schemer-bootstrap.asm
 	./assembler <schemer-bootstrap.asm > $@
 
 schemer-bootstrap.asm : schemer.sch lib.sch
-	cat lib.sch schemer.sch | guile schemer.sch > $@
+	cat lib.sch schemer.sch | guile --use-srfi=13 schemer.sch > $@
 
 assembler.yy.o : assembler.yy.c
 	gcc ${CFLAGS} -c assembler.yy.c

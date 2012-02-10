@@ -1,9 +1,4 @@
 ; utility functions
-(define for-all? (lambda (f l) (if (null? l) 
-				   #t
-				   (if (f (car l))
-				       (for-all? f (cdr l)) #f))))
-
 (define last (lambda (l) (if (null? l) l 
 			     (if (not (pair? l)) l 
 				 (if (not (pair? (cdr l))) l 
@@ -12,25 +7,29 @@
 
 ; check if a string represents a numeric constant.
 ; i.e., the string "123" is numeric
-(define is-numeric? (lambda (str)
-		      (let ((r (string->list str)))
-			(if (null? r) #f
-			    (if (char=? (car r) #\-)
-				(if (null? (cdr r)) #f (for-all? is-number? (cdr r)))
-				(if (char=? (car r) #\+) 
-				    (if (null? (cdr r)) #f (for-all? is-number? (cdr r)))
-				    (for-all? is-number? r)))))))
+;; (define string-is-numeric? (lambda (str)
+;; 		      (let ((r (string->list str)))
+;; 			(if (null? r) #f
+;; 			    (if (char=? (car r) #\-)
+;; 				(if (null? (cdr r)) #f (for-all? char-is-digit? (cdr r)))
+;; 				(if (char=? (car r) #\+) 
+;; 				    (if (null? (cdr r)) #f (for-all? char-is-digit? (cdr r)))
+;; 				    (for-all? char-is-digit? r)))))))
 
-(define calculate-string-list-length
-  (lambda (strl n)
-    (if (null? strl) n	
-	(calculate-string-list-length
-	 (if (char=? (car strl) #\\) (cdr (cdr strl)) (cdr strl))
-	 (+ n 1)))))
 
-(define calculate-string-length
-  (lambda (str)
-    (calculate-string-list-length (string->list str) -2)))
+(define string-is-numeric? (lambda (str)
+			     (let ((first-char (string-ref str 0))
+				   (strlen     (string-length str))
+				   (test (lambda (c v) (if (not v) v (char-is-digit? c)))))
+			       (if (= 0 strlen) #f
+				   (if (< 1 strlen)
+				       (if (if (char=? first-char #\-) #t
+					       (if (char=? first-char #\+) #t
+						   (char-is-digit? first-char)))
+					   (string-fold test #t str 1 (string-length str))
+					   #f)
+				   (char-is-digit? first-char))))))
+
 
 ; The underlying VM uses a tagged memory model that differentiates between
 ; numbers, pointers, vm constants, and language constants. 
@@ -445,6 +444,18 @@
 (define compile-number 
   (lambda (c env) (append-instructions (list "PUSH" (asm-number c))) #f))
 
+
+(define calculate-string-list-length
+  (lambda (strl n)
+    (if (null? strl) n	
+	(calculate-string-list-length
+	 (if (char=? (car strl) #\\) (cdr (cdr strl)) (cdr strl))
+	 (+ n 1)))))
+
+(define calculate-string-length
+  (lambda (str)
+    (calculate-string-list-length (string->list str) -2)))
+
 (define compile-string 
  (lambda (s env) 
    (let ((strlabel (fresh-label))
@@ -521,7 +532,7 @@
 	(begin (append-instructions (list "PUSH" true-value)) #f)
 	(if (string=? x "#f")
 	    (begin (append-instructions (list "PUSH" false-value)) #f)
-	    (if (is-numeric? x)
+	    (if (string-is-numeric? x)
 		(compile-number x env) 
 		(if (char=? (car (string->list x)) #\")
 		    (compile-string x env)
@@ -1272,7 +1283,7 @@
 					  (if (char=? c #\)) #t
 					      (if (char=? c #\") #t
 						  (if (char=? c #\; ) #t #f)))))))
-(define is-number?    (lambda (c) (if (char>=? c #\0) (char<=? c #\9) #f)))
+(define char-is-digit?(lambda (c) (if (char>=? c #\0) (char<=? c #\9) #f)))
 (define is-char-name? (lambda (s) (if (string=? s "newline") #t 
 				      (if (string=? s "space") #t
 					  (if (string=? s "tab") #t #f)))))
