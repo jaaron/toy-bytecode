@@ -1,7 +1,7 @@
 # CFLAGS=-g
 CFLAGS ?= -O3
 
-all : interpreter trace-interpreter assembler
+all : schemer.bytecode interpreter trace-interpreter assembler
 
 interpreter : interpreter.o
 	gcc ${CFLAGS} -o interpreter interpreter.o
