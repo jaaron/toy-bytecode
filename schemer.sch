@@ -137,6 +137,7 @@
 	   ("*"			 "multiply_box"	         "multiply")
 	   ("%"			 "modulo_box"	         "modulo")
 	   ("/"			 "divide_box"	         "divide") 
+	   ("string-ref"         "string_ref_box"        "string_ref")
 	   ("string->list"	 "string_list_box"	 "string_list")
 	   ("print-char"	 "print_char_box"	 "print_char") 
 	   ("print-num"		 "print_num_box"	 "print_num")
@@ -1133,6 +1134,19 @@
 	 (list (asm-label-definition "__make_string_done")			; (s s n)
 	       "POP" "POP"))
 	(assembly-funret))
+
+      (begin
+	(append-named-consbox "string_ref"
+			      initial-env-ref
+			      (asm-label-reference "__string_ref"))
+	(append-instruction (asm-label-definition "__string_ref"))
+	(assembly-env-val 0 0)
+	(assembly-env-val 0 1)
+	(append-instructions 
+	 (list "PUSH" (asm-number 2)
+	       "ADD"
+	       "LOAD"))
+	(assembly-funret))			    
 
       (begin									; converting a string to a list is a PIA. 
 	(append-named-consbox "string_list" 

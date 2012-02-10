@@ -1,3 +1,4 @@
+(define >=              (lambda (n1 n2) (if (= n2 n1) #t (< n2 n1))))
 (define char<=?         (lambda (c1 c2) (if (char=? c1 c2) #t (char<? c1 c2))))
 (define char>?          (lambda (c1 c2) (char<? c2 c1)))
 (define char>=?         (lambda (c1 c2) (if (char=? c1 c2) #t (char<? c2 c1))))
@@ -16,6 +17,10 @@
 (define map-helper      (lambda (f l ll) (if (null? l) (reverse ll) (map-helper f (cdr l) (cons (f (car l)) ll)))))
 (define map		(lambda (f l) (map-helper f l (quote ()))))
 
+(define foldl-string    (lambda (f seed s start end)
+			  (if (>= start end) seed
+			      (foldl-string f (f seed (string-ref s start)) 
+					    s (+ start 1) end))))
 
 (define sublist-helper  (lambda (l start end acc)
 			  (if (null? l) (reverse acc)
@@ -24,7 +29,18 @@
 				      (sublist-helper (cdr l) 0 (- end 1) (cons (car l) acc))
 				      (sublist-helper (cdr l) (- start 1) (- end 1) nil))))))
 (define sublist         (lambda (l start end) (sublist-helper l start end nil)))
-(define substring       (lambda (s start end) (list->string (sublist (string->list s) start end))))
+
+(define copy-into-string (lambda (dest dest-offset src src-offset src-end)
+			   (foldl-string (lambda (loc c)
+					   (string-set! dest loc c)
+					   (+ loc 1))
+					 dest-offset src src-offset src-end)
+			   dest))
+
+
+(define substring       (lambda (s start end) 
+			  (copy-into-string (make-string (- end start)) 0 s start end)))
+
 (define display-list-body (lambda (l spaces)
 			    (if (null? l) #t
 				(begin
@@ -45,9 +61,12 @@
 		       (print-char #\()
 		       (display-list-body l #t)
 		       (print-char #\))))
-		       
+
 (define display-string 
-  (lambda (s) (display-list-body (string->list s) #f)))
+  (lambda (s) 
+    (foldl-string 
+     (lambda (x c) (display c))
+     nil s 0 (string-length s))))
 
 (define display (lambda (x)
 		  (if (null? x)
@@ -81,21 +100,28 @@
   (lambda (l)
       (list->string-helper (make-string (length l)) l 0)))
 
+;; (define string-append
+;;   (lambda (s1 s2) 
+;;     (list->string (append (string->list s1) (string->list s2)))))
+
 (define string-append
-  (lambda (s1 s2) 
-    (list->string (append (string->list s1) (string->list s2)))))
+  (lambda (s1 s2)
+    (let ((s1-length (string-length s1))
+	  (s2-length (string-length s2)))
+    (copy-into-string (copy-into-string (make-string (+ s1-length s2-length)) 0 s1 0 s1-length)
+		      s1-length s2 0 s2-length))))
 
-(define string=?-helper
-  (lambda (sl1 sl2)
-    (if (if (null? sl1) (null? sl2) #f) 
-	#t ;; both are null
-	(if (null? sl2) #f ;; sl2 is null, sl1 isn't
-	    (if (null? sl1) #f ;; sl1 is null, sl2 isn't
-		(if (char=? (car sl1) (car sl2)) 
-		    (string=?-helper (cdr sl1) (cdr sl2))
-		    #f))))))
+(define substring=?
+  (lambda (s1 s2 start end)
+    (if (>= start end) #t
+	(if (char=? (string-ref s1 start) (string-ref s2 start))
+	    (substring=? s1 s2 (+ start 1) end)
+	    #f))))
 
-(define string=? (lambda (s1 s2) (string=?-helper (string->list s1) (string->list s2))))
+(define string=? (lambda (s1 s2) (let ((s1-length (string-length s1))
+				       (s2-length (string-length s2)))
+				   (if (= s1-length s2-length)
+				       (substring=? s1 s2 0 s1-length) #f))))
 
 (define digit-to-char 
   (lambda (d)
