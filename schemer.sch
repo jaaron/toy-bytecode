@@ -67,7 +67,7 @@
 ;
 ; This list associates the symbols with special
 ; compiler functions.
-(define builtin-forms 
+(define special-forms 
   (lambda ()
     (list
      (cons "lambda" compile-lambda)
@@ -81,15 +81,15 @@
 
 ; search the list of builtin forms for a 
 ; particular form
-(define find-builtin-helper
+(define find-special-helper
   (lambda (f ss)
     (if (null? ss) #f
 	(if (not (string? f)) #f
 	    (if (string=? f (car (car ss))) (cdr (car ss))
-		(find-builtin-helper f (cdr ss)))))))
+		(find-special-helper f (cdr ss)))))))
     
-(define find-builtin 
-  (lambda (f) (find-builtin-helper f (builtin-forms))))    
+(define find-special 
+  (lambda (f) (find-special-helper f (special-forms))))    
 
 ; The top-level-env is a list containing the list of symbols 
 ; defined by the compiler at the top level. It is very important
@@ -669,10 +669,12 @@
 	  ))))
 
 (define compile-quoted-sexp
-  (lambda (s env)
+  (lambda (s env rest)
     (if (pair? s)
-	(let ((r1 (compile-quoted-sexp (cdr s) env))
-	      (r2 (compile-quoted-sexp (car s) env)))
+	(let ((r2 (compile-quoted-sexp (car s) env #t))
+	      (r1 (compile-quoted-sexp (cdr s) env #t))
+	      )
+	  (append-instruction "SWAP")
 	  (u-call-cons)
 	  (lambda () 
 	    (do-compile-task r1) 
@@ -686,7 +688,7 @@
 
 (define compile-quote 
   (lambda (s env rest)
-    (compile-quoted-sexp (car (cdr s)) env)))
+    (compile-quoted-sexp (car (cdr s)) env rest)))
 
 (define compile-arguments
   (lambda (l env)
@@ -703,7 +705,7 @@
 
 (define compile-list
   (lambda (l env rest)
-    (let ((s (find-builtin (car l))))
+    (let ((s (find-special (car l))))
       (if s 
 	  (s l env rest)
 	  (let ((r1 (compile-arguments (cdr l) env))
@@ -715,11 +717,6 @@
 	    (lambda ()
 	      (do-compile-task r1)
 	      (do-compile-task r2)))))))
- 
-(define compile-sexp-with-label 
-  (lambda (lbl s env rest)
-    (append-instruction (asm-label-definition lbl))
-    (compile-sexp s env rest)))
 
 (define compile-sexp 
   (lambda (s env rest) 
@@ -1007,28 +1004,32 @@
 	(append-instruction (asm-label-definition "__pair"))
 	(assembly-env-val 0 0)
 	(append-instructions 
-	 (list "DUP"
-	       "ISPTR"
-	       "PUSH" (asm-label-reference "__pair_q_isptr") 
-	       "JTRUE"
-	       "POP"
-	       "PUSH" false-value))
+	 (list "DUP"						; (rp x x)
+	       "ISPTR"						; (rp x)
+	       "PUSH" (asm-label-reference "__pair_q_isptr")	; (rp x (is-ptr? x) @pair_q_isptr)
+	       "JTRUE"						; (rp x)
+	       (asm-label-definition "__pair_q_isnil")
+	       "POP"						; (rp)
+	       (asm-label-definition "__pair_q_islconst") 
+	       "PUSH" false-value))				; (rp false)
 	(assembly-funret)
 					; this isn't the greatest heuristic,
 					; but at this point if the target of a 
 					; pointer is not a language constant,
 					; then the pointer points to a cons box.
 	(append-instructions
-	 (list (asm-label-definition "__pair_q_isptr")
-	       "PUSH" (asm-number 0)
-	       "LOAD"
+	 (list (asm-label-definition "__pair_q_isptr")		; (rp x)
+	       "DUP"						; (rp x x)
+	       "PUSH" (asm-label-reference "__nil")		; (rp x x nil)
+	       "EQ"						; (rp x (= x nil))
+	       "PUSH" (asm-label-reference "__pair_q_isnil")	; (rp x (= x nil) @pair_q_is_nil)
+	       "JTRUE"						; (rp x)
+	       "PUSH" (asm-number 0)				; (rp x 0)
+	       "LOAD"    
 	       "ISLCONST"
 	       "PUSH" (asm-label-reference "__pair_q_islconst")
-	       "JTRUE"
+	       "JTRUE"	       
 	       "PUSH" true-value))
-	(assembly-funret)
-	(append-instructions 
-	 (list (asm-label-definition "__pair_q_islconst") "PUSH" false-value))
 	(assembly-funret))
       
 					; list is sneaky and takes advantage of the fact

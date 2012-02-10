@@ -1,22 +1,29 @@
-#define MEM_SIZE   0x20000
-#define STACK_SIZE 0x200
+#define MEM_SIZE   (1<<PTR_TARGET_BITS)
+#define STACK_SIZE 0x400
 
-#define NUM    (0x3 << 30)
-#define LCONST (0x1 << 30)
+typedef int32_t word;
+#define FLAG_BITS 2
+
+#define DATA_BITS ((sizeof(word)<<3)-FLAG_BITS)
+#define FLAG_MASK (((1<<FLAG_BITS)-1) << DATA_BITS)
+#define DATA_MASK (~FLAG_MASK)
+
+#define NUM    (0x3 << DATA_BITS)
+#define LCONST (0x1 << DATA_BITS)
 #define VCONST 0x0
-#define PTR    (0x2 << 30)
+#define PTR    (0x2 << DATA_BITS)
 
 #define CHAR_FLAG 0x00800000
 
 #define MAKE_VCONST(x) (x)
-#define MAKE_LCONST(x) ((x & ~LCONST) | LCONST)
+#define MAKE_LCONST(x) ((x & ~NUM) | LCONST)
 #define MAKE_CHAR(x)   (CHAR_FLAG | (x & 0x007fffff))
 #define MAKE_NUM(x)    ((x & ~NUM) | NUM)
 
-#define PTR_SIZE_SHIFT  17
-#define PTR_SIZE_MASK   ((1<<(30 - PTR_SIZE_SHIFT))-1)
-#define PTR_TARGET_MASK ((1<<PTR_SIZE_SHIFT)-1)
-#define MAKE_PTR(x,sz) (PTR | (((sz) & PTR_SIZE_MASK) << PTR_SIZE_SHIFT) | (x & PTR_TARGET_MASK))
+#define PTR_TARGET_BITS  18
+#define PTR_SIZE_MASK    ((1<<(DATA_BITS - PTR_TARGET_BITS))-1)
+#define PTR_TARGET_MASK  ((1<<PTR_TARGET_BITS)-1)
+#define MAKE_PTR(x,sz)   (PTR | (((sz) & PTR_SIZE_MASK) << PTR_TARGET_BITS) | (x & PTR_TARGET_MASK))
 
 #define INS(i) MAKE_VCONST(i)
 

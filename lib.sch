@@ -6,8 +6,6 @@
 					(if (pair? l) (list? (cdr l)) #f))))
 (define length-helper	(lambda (l n) (if (null? l) n (length-helper (cdr l) (+ 1 n)))))
 (define length		(lambda (l) (length-helper l 0)))
-(define map-helper      (lambda (f l ll) (if (null? l) (reverse ll) (map-helper f (cdr l) (cons (f (car l)) ll)))))
-(define map		(lambda (f l) (map-helper f l (quote ()))))
 (define not		(lambda (x) (if x #f #t)))
 (define reverse-helper	(lambda (l acc) (if (null? l) acc  (reverse-helper (cdr l) (cons (car l) acc)))))
 (define reverse		(lambda (l) (reverse-helper l nil)))
@@ -15,6 +13,9 @@
 			  (if (null? l1) l2 (revappend (cdr l1) (cons (car l1) l2)))))
 (define append		(lambda (l1 l2)
 			  (revappend (reverse l1) l2)))
+(define map-helper      (lambda (f l ll) (if (null? l) (reverse ll) (map-helper f (cdr l) (cons (f (car l)) ll)))))
+(define map		(lambda (f l) (map-helper f l (quote ()))))
+
 
 (define sublist-helper  (lambda (l start end acc)
 			  (if (null? l) (reverse acc)

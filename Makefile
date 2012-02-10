@@ -18,6 +18,18 @@ trace-interpreter.o : interpreter.c interpreter.h
 assembler : assembler.yy.o
 	gcc ${CFLAGS} -o assembler assembler.yy.o
 
+schemer.bytecode : assembler schemer.asm
+	./assembler <schemer.asm >$@
+
+schemer.asm : interpreter lib.sch schemer.sch schemer-bootstrap.bytecode
+	cat lib.sch schemer.sch | ./interpreter schemer-bootstrap.bytecode > $@
+
+schemer-bootstrap.bytecode: assembler schemer-bootstrap.asm
+	./assembler <schemer-bootstrap.asm > $@
+
+schemer-bootstrap.asm : schemer.sch lib.sch
+	cat lib.sch schemer.sch | guile schemer.sch > $@
+
 assembler.yy.o : assembler.yy.c
 	gcc ${CFLAGS} -c assembler.yy.c
 
@@ -25,7 +37,7 @@ assembler.yy.c : assembler.l interpreter.h
 	lex -o assembler.yy.c assembler.l
 
 clean : 
-	rm -f *~ assembler.yy.c *.o
+	rm -f *~ assembler.yy.c *.o *.asm *-bootstrap*
 
 distclean : clean
-	rm -f interpreter trace-interpreter assembler
+	rm -f interpreter trace-interpreter assembler *.asm *.bytecode

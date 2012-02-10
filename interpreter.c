@@ -111,11 +111,16 @@
    Pushing an element on the stack.  Like popping this changes the
    stack pointer so use with care.
 */
-#define STACK_PUSH(x) do{			\
-    int32_t __tmp = x;				\
-    *sp = __tmp;				\
-    sp--;					\
-  }while(0)
+#define STACK_PUSH(x) do{					\
+	int32_t __tmp = x;					\
+	if(sp == &memory[MEM_SIZE - STACK_SIZE]){		\
+	    fprintf(stderr, "Stack overflow imminent!\n");	\
+	    DO_DUMP(stderr);					\
+	    exit(-1);						\
+	}							\
+	*sp = __tmp;						\
+	sp--;							\
+    }while(0)
 #define STACK_HEIGHT() ((memory + MEM_SIZE-1) - sp)
 
 
@@ -213,7 +218,7 @@
    interpreter.h header file.
 */
 #define PTR_TARGET(x)        (((unsigned int)x) & PTR_TARGET_MASK)
-#define PTR_SIZE(x)          ((((unsigned int)x) >> PTR_SIZE_SHIFT) & PTR_SIZE_MASK)
+#define PTR_SIZE(x)          ((((unsigned int)x) >> PTR_TARGET_BITS) & PTR_SIZE_MASK)
 #define NUM_TO_NATIVE(x)     ((typeof(x))((((int)x) << 2) >> 2))
 #define CHAR_TO_NATIVE(x)    ((char)((x) & 0xff))
 #define CELL_TYPE(x)         (((unsigned int)x) & (0x3 << 30))
