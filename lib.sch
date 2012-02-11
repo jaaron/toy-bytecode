@@ -100,9 +100,8 @@
   (lambda (l)
       (list->string-helper (make-string (length l)) l 0)))
 
-;; (define string-append
-;;   (lambda (s1 s2) 
-;;     (list->string (append (string->list s1) (string->list s2)))))
+(define string->list
+  (lambda (s) (reverse (string-fold (lambda (c l) (cons c l)) nil s 0 (string-length s)))))
 
 (define string-append
   (lambda (s1 s2)
