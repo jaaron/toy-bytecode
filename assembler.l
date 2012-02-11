@@ -25,7 +25,7 @@
 
   static uint32_t out_buffer[MEM_SIZE];
   static uint32_t words = 0;
-
+  static uint32_t __line_number=0;
   static inline int32_t decode_ptr(char *text, int base1, int base2){
     char *comma;
     unsigned long addr = strtoul(text, &comma, base1);    
@@ -114,8 +114,8 @@ v{D_NUM}         {out_buffer[words++] = PACK_VM_CONST(strtoul(yytext+1, NULL, 10
 l{X_NUM}         {out_buffer[words++] = PACK_LANG_CONST(strtol(yytext+1, NULL, 16));}
 l{D_NUM}         {out_buffer[words++] = PACK_LANG_CONST(strtol(yytext+1, NULL, 10));}
 
-;;.*\n         {}
-#.*\n          {}
+;;.*\n         {__line_number++;}
+#.*\n          {__line_number++;}
 PUSH     {out_buffer[words++] = PACK_VM_CONST(I_PUSH);}
 POP      {out_buffer[words++] = PACK_VM_CONST(I_POP); }
 SWAP     {out_buffer[words++] = PACK_VM_CONST(I_SWAP);}
@@ -165,7 +165,7 @@ EOF      {out_buffer[words++] = PACK_CHAR(EOF);}
   memcpy(labels[nr_labels].txt, yytext+1, comma - yytext - 1);
   labels[nr_labels].txt[comma - yytext-1] = '\0';
   labels[nr_labels].dst = PACK_PTR(words, sz);
-  fprintf(stderr, "label %s at offset %u size: %u\n", yytext+1, words, sz);
+  // fprintf(stderr, "label %s at offset %u size: %u\n", yytext+1, words, sz);
 
   for(i=0;i<nr_unresolved;i++){
     if(unresolved_labels[i].txt &&
@@ -183,7 +183,7 @@ EOF      {out_buffer[words++] = PACK_CHAR(EOF);}
   int i;
   labels[nr_labels].txt = strdup(yytext+1);
   labels[nr_labels].dst = PACK_PTR(words,0xff);
-  fprintf(stderr, "label %s at offset %u unknown size\n", yytext+1, words);
+  // fprintf(stderr, "label %s at offset %u unknown size\n", yytext+1, words);
 
   for(i=0;i<nr_unresolved;i++){
     if(unresolved_labels[i].txt &&
@@ -213,9 +213,10 @@ EOF      {out_buffer[words++] = PACK_CHAR(EOF);}
   words++;
 }
 
+\n             {__line_number++;}
 [[:space:]]*   {}
 <<EOF>>        { yyterminate(); }
-.              { fprintf(stderr, "Error: unexpected token: %s after %u words\n", yytext, words); exit(1);}
+.              { fprintf(stderr, "Error: unexpected token: %s after %u words (line: %u)\n", yytext, words, __line_number+1); exit(1);}
 
 %%
 
@@ -232,8 +233,8 @@ int main(int argc, char *argv[])
 
   for(i=0;i<nr_unresolved;i++){
     if(unresolved_labels[i].txt != NULL){
-      fprintf(stderr, "Unresolved reference to label: \"%s\" at offset %u\n",
-	      unresolved_labels[i].txt, unresolved_labels[i].dst);
+      fprintf(stderr, "Unresolved reference to label: \"%s\" at offset %u (line: %u)\n",
+	      unresolved_labels[i].txt, unresolved_labels[i].dst, __line_number+1);
       failure = 1;
     }
   }
@@ -242,7 +243,7 @@ int main(int argc, char *argv[])
     exit(1);
   }
   write(output_filedes, out_buffer, words*sizeof(int32_t));
-  fprintf(stderr, "Wrote %u words\n", words);
+  fprintf(stderr, "Read %d lines. Wrote %u words\n", __line_number, words);
   close(output_filedes);
   return 0;
 }
