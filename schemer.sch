@@ -1,9 +1,8 @@
 ; utility functions
-(define last (lambda (l) (if (null? l) l 
-			     (if (not (pair? l)) l 
-				 (if (not (pair? (cdr l))) l 
-				     (if (null? (cdr l)) l
-					 (last (cdr l))))))))
+(define last (lambda (l) (if (or (null? l) 
+				 (or (not (pair? l)) 
+				     (not (pair? (cdr l))))) l 
+				     (last (cdr l)))))
 
 (define string-is-numeric? (lambda (str)
 			     (let ((first-char (string-ref str 0))
@@ -11,9 +10,9 @@
 				   (test (lambda (c v) (if (not v) v (char-is-digit? c)))))
 			       (if (= 0 strlen) #f
 				   (if (< 1 strlen)
-				       (if (if (char=? first-char #\-) #t
-					       (if (char=? first-char #\+) #t
-						   (char-is-digit? first-char)))
+				       (if (or (char-is-digit? first-char)
+					       (or (char=? first-char #\-)
+						   (char=? first-char #\+)))
 					   (string-fold test #t str 1 (string-length str))
 					   #f)
 				   (char-is-digit? first-char))))))
@@ -42,10 +41,22 @@
 ; Language constants
 (define false-value  "FALSE")
 (define true-value   "TRUE")
-(define string-type-flag (asm-lang-const 2))
-(define symbol-type-flag (asm-lang-const 3))
+(define ptr-type-offset		(asm-number 0))
 
+(define consbox-type-flag	(asm-lang-const 2))
+(define consbox-size		(asm-number 3))
+(define consbox-car-offset	(asm-number 1))
+(define consbox-cdr-offset	(asm-number 2))
 
+(define symbol-type-flag	(asm-lang-const 4))
+
+(define vector-type-flag	 (asm-lang-const 5))
+(define vector-length-offset     (asm-number 1))
+(define vector-elems-offset      (asm-number 2))
+
+(define string-type-flag	(asm-lang-const 3))
+(define string-length-offset	vector-length-offset)
+(define string-chars-offset     vector-elems-offset)
 
 ; A few builtin forms are handled specially
 ; by the compiler.  Some of these will later
@@ -60,6 +71,8 @@
      (cons "lambda" compile-lambda)
      (cons "let"    compile-let)
      (cons "if"     compile-if)
+     (cons "and"    compile-and)
+     (cons "or"     compile-or)
      (cons "define" compile-define)  
      (cons "begin"  compile-begin)
      (cons "quote"  compile-quote)
@@ -139,6 +152,7 @@
 	   ("set-cdr!"		 "set_cdr_box"	         "set_cdr") 
 	   ("string-set!"	 "string_set_box"	 "string_set")
 	   ("make-string"	 "make_string_box"	 "make_string")
+;;	   ("make-vector"        "make_vector_box"        "make_vector")
 	   ("char=?"		 "char_equal_box"	 "equal")     ;; for characters
 	   ("char<?"		 "char_less_than_box"    "less_than") ;; for characters
 	   ("eof-object?"	 "eof_object_q_box"	 "eof_object_q")))))
@@ -150,7 +164,8 @@
 (define append-named-consbox
   (lambda (name car-value cdr-value)
     (append-instructions 
-     (list (asm-label-definition-sz name 2)
+     (list (asm-label-definition-sz name 3)
+	   consbox-type-flag
 	   car-value
 	   cdr-value))
     name))
@@ -206,19 +221,6 @@
 	  (append-instruction (car inss))
 	  (append-instructions (cdr inss))))))
 
-
-; append assembly code for storing a value to the next free
-; heap cell.
-; (val)  -> (hp) , hp' = hp+1, heap[hp] = val
-(define store-to-heap (lambda ()
-			(append-instructions
-			 (list "PUSH" (asm-number 1)   ; (thing 1)
-			       "ALOC"                  ; (thing hp)
-			       "DUP"                   ; (thing hp hp)
-			       "ROT"                   ; (hp thing hp)
-			       "PUSH" (asm-number 0)   ; (hp thing hp 0)
-			       "STOR"))))
-
 ;
 ; We're now actually into the guts of the compiler.  
 ; The conventions are as follows:
@@ -253,33 +255,38 @@
 			   
 ; assembly for the primitive list functions car, cdr, and cons
 ; (ptr) -> ((car ptr))
-(define assembly-car  (lambda () (append-instructions (list "PUSH" (asm-number 0) "LOAD"))))
+(define assembly-car  (lambda () (append-instructions (list "PUSH" consbox-car-offset "LOAD"))))
 
 ; (ptr) -> ((cdr ptr))
-(define assembly-cdr  (lambda () (append-instructions (list "PUSH" (asm-number 1) "LOAD"))))
+(define assembly-cdr  (lambda () (append-instructions (list "PUSH" consbox-cdr-offset "LOAD"))))
 
 
 ; (cdr car) -> ((cons car cdr))
 (define assembly-cons (lambda ()
 			(append-instructions 
-			 (list "PUSH" (asm-number 2) ; (cdr car 2)
-			       "ALOC"                ; (cdr car &hp)
-			       "DUP"                 ; (cdr car hp hp)
-			       "ROT"                 ; (cdr hp car hp)
-			       "PUSH" (asm-number 0) ; (cdr hp car hp 0)
-			       "STOR"                ; (cdr hp) car stored
-			       "DUP"                 ; (cdr hp hp)
-			       "ROT"                 ; (hp cdr hp)
-			       "PUSH" (asm-number 1) ; (hp cdr hp 1)
-			       "STOR"))              ; (hp)  cdr stored
+			 (list "PUSH" consbox-type-flag		; (cdr car cons-flag)
+			       "PUSH" consbox-size		; (cdr car cons-flag consbox-size)
+			       "ALOC"				; (cdr car cons-flag hp)
+			       "DUP"				; (cdr car cons-flag hp hp)
+			       "ROT"				; (cdr car hp cons-flag hp)
+			       "PUSH" ptr-type-offset		; (cdr car hp cons-flag hp 0)
+			       "STOR"				; (cdr car hp)
+			       "DUP"				; (cdr car hp hp)
+			       "ROT"				; (cdr hp car hp)
+			       "PUSH" consbox-car-offset	; (cdr hp car hp 0)
+			       "STOR"				; (cdr hp) car stored
+			       "DUP"				; (cdr hp hp)
+			       "ROT"				; (hp cdr hp)
+			       "PUSH" consbox-cdr-offset	; (hp cdr hp 1)
+			       "STOR"))				; (hp)  cdr stored
 			))
 
 
 ; top is the cons box to set, then the new value
 (define assembly-set-car 
-  (lambda () (append-instructions (list "PUSH" (asm-number 0) "STOR"))))
+  (lambda () (append-instructions (list "PUSH" consbox-car-offset "STOR"))))
 (define assembly-set-cdr 
-  (lambda () (append-instructions (list "PUSH" (asm-number 1) "STOR"))))
+  (lambda () (append-instructions (list "PUSH" consbox-cdr-offset "STOR"))))
 
 ; these define how to call the three primitives car, cdr, and cons as
 ; part of larger compiler generated sequences (e.g., function application)
@@ -303,6 +310,14 @@
 ; environment pointer to the stack, set the environment 
 ; pointer to the new list, invoke the closure's code,
 ; then restore the environment pointer on return.
+(define assembly-make-arguments-helper (lambda (nr-args)
+					 (if (= nr-args 0) #t
+					     (begin
+					       (u-call-cons)
+					       (assembly-make-arguments-helper (- nr-args 1))))))
+(define assembly-make-arguments (lambda (nr-args)
+				  (assembly-nil)
+				  (assembly-make-arguments-helper nr-args)))
 ;
 ; (args clos) -> ((clos args)) 
 (define assembly-funcall (lambda ()
@@ -613,11 +628,8 @@
 			(cons (list (car (cdr l)) label "__nil")
 			      (cdr (car top-level-env-endptr))))
 	      (set-car! top-level-env-endptr (cdr (car top-level-env-endptr)))
-	      (append-instructions (list "PUSH" 
-					 (asm-label-reference label)
-					 "PUSH"
-					 (asm-number 0)
-					 "STOR"))))
+	      (append-instructions (list "PUSH" (asm-label-reference label)))
+	      (assembly-set-car)))
 	r))))
   
 ; when we can detect application of a builtin
@@ -653,6 +665,14 @@
 	      )
 	    )
 	  ))))
+
+(define compile-and
+  (lambda (l env rest)
+    (compile-if (list 'if (cadr l) (caddr l) "#f") env rest)))
+
+(define compile-or 
+  (lambda (l env rest)
+    (compile-if (list 'if (cadr l) "#t" (caddr l)) env rest)))
 
 (define compile-quoted-sexp
   (lambda (s env rest)
@@ -751,26 +771,25 @@
       (begin
 	(append-named-consbox "cons"
 			      initial-env-ref
-			      (asm-label-reference "__cons"))			; this is the closure cell
+			      (asm-label-reference "__cons"))	; this is the closure cell
 	(append-instructions
 	 (list 
-	  (asm-label-definition "__u_cons")					; this is the internal entry point
-					; stack is (cdr car rp)
-	  "ROT"))								; stack is (rp  cdr car)
-	(assembly-cons)								; this is the internal cons used when building arg lists
+	  (asm-label-definition "__u_cons")			; this is the internal entry point
+								; stack is (cdr car rp)
+	  "ROT"))						; stack is (rp  cdr car)
+	(assembly-cons)						; this is the internal cons used when building arg lists
 	(assembly-funret)                   
-	(append-instruction (asm-label-definition "__cons"))			; this is the exposed cons, it plays a little trick
-					; with the environment list by loading the second arg,
-					; grabbing the cons box containing the first arg,
-	(assembly-env-val 0 1)							; then overwriting the cdr pointer and returning.
-					; this is safe since the cons boxes surrounding the 
-					; arguments are allocated in assembly-funcall
-	(assembly-env-cell 0 0)							; so it is guaranteed to not be shared.
-	(append-instructions							; stack is (cdr &car)
-	 (list "DUP"								; (cdr &car &car)                       
-	       "ROT"								; (&car cdr &car)
-	       "PUSH" (asm-number 1)						; (&car cdr &car 1)
-	       "STOR"))								; (&car)
+	(append-instruction (asm-label-definition "__cons"))	; this is the exposed cons, it plays a little trick
+								; with the environment list by loading the second arg,
+								; grabbing the cons box containing the first arg,
+	(assembly-env-val 0 1)					; then overwriting the cdr pointer and returning.
+								; this is safe since the cons boxes surrounding the 
+								; arguments are allocated in assembly-funcall
+	(assembly-env-cell 0 0)					; so it is guaranteed to not be shared.
+	(append-instructions					; stack is (cdr &car)
+	 (list "DUP"						; (cdr &car &car)                       
+	       "ROT"))						; (&car cdr &car)
+	(assembly-set-cdr)
 	(assembly-funret))
 
       (begin
@@ -943,7 +962,7 @@
 	(assembly-funret)
 	(append-instructions
 	 (list (asm-label-definition "__string_q_is_ptr")
-	       "PUSH" (asm-number 0)
+	       "PUSH" ptr-type-offset
 	       "LOAD"
 	       "PUSH" string-type-flag
 	       "EQ"))
@@ -996,13 +1015,8 @@
 	       "JTRUE"						; (rp x)
 	       (asm-label-definition "__pair_q_isnil")
 	       "POP"						; (rp)
-	       (asm-label-definition "__pair_q_islconst") 
 	       "PUSH" false-value))				; (rp false)
 	(assembly-funret)
-					; this isn't the greatest heuristic,
-					; but at this point if the target of a 
-					; pointer is not a language constant,
-					; then the pointer points to a cons box.
 	(append-instructions
 	 (list (asm-label-definition "__pair_q_isptr")		; (rp x)
 	       "DUP"						; (rp x x)
@@ -1010,12 +1024,19 @@
 	       "EQ"						; (rp x (= x nil))
 	       "PUSH" (asm-label-reference "__pair_q_isnil")	; (rp x (= x nil) @pair_q_is_nil)
 	       "JTRUE"						; (rp x)
-	       "PUSH" (asm-number 0)				; (rp x 0)
-	       "LOAD"    
-	       "ISLCONST"
-	       "PUSH" (asm-label-reference "__pair_q_islconst")
-	       "JTRUE"	       
-	       "PUSH" true-value))
+	       "PUSH" ptr-type-offset				; (rp x 0)
+	       "LOAD"                                           ; (rp[0])
+	       "DUP"                                            ; (rp[0] rp[0])
+	       "ISLCONST"                                       ; (rp[0] (is-lconst? rp[0]))
+	       "PUSH" (asm-label-reference "__pair_q_islconst") ; (rp[0] (is-lconst? rp[0]) @__pair_q_islconst)
+	       "JTRUE"						; (rp[0])
+	       "POP"						; ()                   
+	       "PUSH" false-value))				; (#f)
+	(assembly-funret)
+	(append-instructions 
+	 (list (asm-label-definition "__pair_q_islconst")
+	       "PUSH" consbox-type-flag                         ; (rp[0] consbox-type-flag)
+	       "EQ"))                                           ; ((= rp[0] consbox-type-flag))
 	(assembly-funret))
       
 					; list is sneaky and takes advantage of the fact
@@ -1035,9 +1056,9 @@
 			      (asm-label-reference "__string_length"))
 	(append-instruction (asm-label-definition "__string_length"))
 	(assembly-env-val 0 0)
-	(append-instructions (list "PUSH" (asm-number 1) "LOAD"))
+	(append-instructions (list "PUSH" string-length-offset "LOAD"))
 	(assembly-funret))
-      
+      	       
       (begin
 	(append-named-consbox "string_set"			                ; setting the character at an offset in the string is easy
 			      initial-env-ref
@@ -1047,7 +1068,7 @@
 	(assembly-env-val 0 0)							; (c str)
 	(assembly-env-val 0 1)							; (c str n)
 	(append-instructions
-	 (list "PUSH" (asm-number 2)						; (c str n 2)
+	 (list "PUSH" string-chars-offset      					; (c str n 2)
 	       "ADD"								; (c str (+ n 2))
 	       "STOR"))								; ()
 	(assembly-nil)
@@ -1062,17 +1083,17 @@
 	(assembly-env-val 0 0)							; (n)
 	(append-instructions 
 	 (list "DUP"								; (n n)
-	       "PUSH" (asm-number 2)						; (n n 2)
+	       "PUSH" string-chars-offset      					; (n n 2)
 	       "ADD"								; (n (+ n 2))
 	       "ALOC"								; (n s)
 	       "DUP"								; (n s s)
 	       "ROT"								; (s n s)
-	       "PUSH" (asm-number 1)						; (s n s 1)
+	       "PUSH" string-length-offset     					; (s n s 1)
 	       "STOR"								; (s)
 	       "DUP"								; (s s)
 	       "PUSH" string-type-flag						; (s s string-type-flag)
 	       "SWAP"								; (s string-type-flag s)
-	       "PUSH" (asm-number 0)						; (s string-type-flag s 0)
+	       "PUSH" ptr-type-offset						; (s string-type-flag s 0)
 	       "STOR"								; (s)
 	       ))
 	(assembly-env-val 0 1)							; (s c?)
@@ -1083,7 +1104,11 @@
 	(assembly-funret)
 	(append-instruction (asm-label-definition "__make_string_two_args"))	; (s)
 	(append-instruction "DUP")						; (s s)
-	(assembly-env-val 0 0)							; (s s n)
+	;; new implementation
+	;; (assembly-env-val 0 1) ; (s s v)
+	;; (assembly-make-arguments 2)
+	;; (append-instructions (list "PUSH" (asm-label-reference "vector_fill")))
+	;; (assembly-tailcall)
 	
 	(append-instructions
 	 (list (asm-label-definition "__make_string_loop")
@@ -1128,7 +1153,7 @@
 	(assembly-env-val 0 0)
 	(assembly-env-val 0 1)
 	(append-instructions 
-	 (list "PUSH" (asm-number 2)
+	 (list "PUSH" string-chars-offset
 	       "ADD"
 	       "LOAD"))
 	(assembly-funret))			    
@@ -1185,7 +1210,6 @@
 (define is-char-name? (lambda (s) (if (string=? s "newline") #t 
 				      (if (string=? s "space") #t
 					  (if (string=? s "tab") #t #f)))))
-
 (define drop-chars-until (lambda (f) (let ((x (read-char))) (if (f x) x (drop-chars-until f)))))
 (define next-non-ws      (lambda ()  (drop-chars-until (lambda (z) (not (is-space? z))))))
 
