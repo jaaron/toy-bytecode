@@ -206,7 +206,7 @@ static inline void print_cell(FILE *stream, int32_t c){
 
 
 #ifndef __TRACE__
-
+#ifndef __CHECK_INS__
 /* 
    The cool thing about indirect threaded dispatching is that
    interpreting the next instruction is just a matter of jumping to
@@ -220,6 +220,19 @@ static inline void print_cell(FILE *stream, int32_t c){
    instruction handler we write will end with a call to NEXT.
 */ 
 #define NEXT goto *instructions[IDX_FROM_INS(*pc++)]
+#else
+/* 
+   This version of NEXT checks to ensure that the target of the PC is
+   in fact an instruction before trying to execute it.  Without this
+   check, the VM will start executing arbitrary machine code if given
+   a bad instruction stream.  But the check adds about a 20%
+   performance penalty.
+*/
+#define NEXT do{						\
+	ASSERT_INS(*pc);					\
+	goto *instructions[IDX_FROM_INS(*pc++)];		\
+    }while(0)
+#endif
 
 /* 
    As implied above, instruction handlers have to have a specific
@@ -241,12 +254,13 @@ static inline void print_cell(FILE *stream, int32_t c){
     define NEXT and INSTRUCTION to print the trace info.  This is
     built using the trace-compiler target in the Makefile.
 */
-#define NEXT do{						\
-    fprintf(stderr,"==================================\n");	\
-    fprintf(stderr,"initial pc: %ld instruction: %"PRId32" ",	\
-	    pc-memory, IDX_FROM_INS(*pc));			\
-    goto *instructions[IDX_FROM_INS(*pc++)];			\
-  }while(0)
+#define NEXT do{							\
+	ASSERT_INS(*pc);						\
+	fprintf(stderr,"==================================\n");		\
+	fprintf(stderr,"initial pc: %ld instruction: %"PRId32" ",	\
+		pc-memory, IDX_FROM_INS(*pc));				\
+	goto *instructions[IDX_FROM_INS(*pc++)];			\
+    }while(0)
 
 #define INSTRUCTION(n,x)			\
   n:						\
@@ -267,6 +281,7 @@ static inline void print_cell(FILE *stream, int32_t c){
 
 #define ASSERT_TYPE(x,t)     if(unlikely(CELL_TYPE(x) != t)){TYPE_ERROR(t);}
 #define ASSERT_NOT_TYPE(x,t) if(unlikely(CELL_TYPE(x) == t)){TYPE_ERROR(!t);}
+#define ASSERT_INS(x)        if(unlikely(!IS_INS(x))){TYPE_ERROR(INSTRUCTION);}
 
 /* 
    HEAP_CHECK is called before allocations to ensure that we don't
