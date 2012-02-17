@@ -50,10 +50,11 @@
 (define consbox-car-offset (asm-number 0))
 (define consbox-cdr-offset (asm-number 1))
 
+(define vector-type-flag     (asm-lang-const 2))
 (define vector-length-offset (asm-number 1))
 (define vector-elems-offset  (asm-number 2))
 
-(define string-type-flag     (asm-lang-const 2))
+(define string-type-flag     (asm-lang-const 3))
 (define string-length-offset vector-length-offset)
 (define string-chars-offset  vector-elems-offset)
 (define symbol-type-flag (asm-lang-const 3))
@@ -136,8 +137,7 @@
 	   ("-"			 "subtract_box"	         "subtract")
 	   ("*"			 "multiply_box"	         "multiply")
 	   ("%"			 "modulo_box"	         "modulo")
-	   ("/"			 "divide_box"	         "divide") 
-	   ("string-ref"         "string_ref_box"        "string_ref")
+	   ("/"			 "divide_box"	         "divide") 	   
 	   ("print-char"	 "print_char_box"	 "print_char") 
 	   ("print-num"		 "print_num_box"	 "print_num")
 	   ("string-length"	 "string_length_box"	 "string_length") 
@@ -150,8 +150,12 @@
 	   ("quit"		 "quit_box"		 "quit")
 	   ("set-car!"		 "set_car_box"	         "set_car")
 	   ("set-cdr!"		 "set_cdr_box"	         "set_cdr") 
-	   ("string-set!"	 "string_set_box"	 "string_set")
+	   ("make-vector"        "make_vector_box"       "make_vector")
+	   ("vector-ref"         "vector_ref_box"        "vector_ref")
+	   ("vector-set!"        "vector_set_box"        "vector_set")
 	   ("make-string"	 "make_string_box"	 "make_string")
+	   ("string-set!"	 "string_set_box"	 "vector_set")
+	   ("string-ref"         "string_ref_box"        "vector_ref")
 	   ("char=?"		 "char_equal_box"	 "equal")     ;; for characters
 	   ("char<?"		 "char_less_than_box"    "less_than") ;; for characters
 	   ("eof-object?"	 "eof_object_q_box"	 "eof_object_q")))))
@@ -511,9 +515,7 @@
 	  ;; this is an error
 	  (begin
 	    ;; this should really write to stderr.
-	    (display (string-append "Undefined symbol: " 
-				    (string-append r "\n Environment is: ")))
-	    (display env)(display top-level-env)
+	    (display (string-append "Undefined symbol: " r))
 	    (newline)
 	    (quit))
 	  )
@@ -982,17 +984,17 @@
       (assembly-funret))
     
     (begin
-      (assembly-builtin-header "string_set")
+      (assembly-builtin-header "vector_set")
       (assembly-env-val 0 2)		; (c)
       (assembly-env-val 0 0)		; (c str)
       (assembly-env-val 0 1)		; (c str n)
       (append-instructions
-       (list "PUSH" string-chars-offset ; (c str n 2)
+       (list "PUSH" vector-elems-offset ; (c str n 2)
 	     "ADD"			; (c str (+ n 2))
 	     "STOR"))			; ()
       (assembly-nil)
       (assembly-funret))
-
+    
     (begin 
       (assembly-builtin-header "vector_fill")
       (assembly-env-val 0 0)					; (s)
@@ -1031,7 +1033,31 @@
 	     "POP"))
       (assembly-funret))
 
-								; make-string
+    (begin 
+      (assembly-builtin-header "make_vector")
+      (assembly-env-val 0 1)                    ; (e)
+      (assembly-env-val 0 0)			; (e n)
+      (append-instructions
+       (list (asm-label-definition "__u_make_vector")
+	     "DUP"				; (e n n)
+	     "PUSH" vector-elems-offset		; (e n n vector-elems-offset)
+	     "ADD"				; (e n (+ n vector-elems-offset))
+	     "ALOC"				; (e n v)
+	     "DUP"				; (e n v v)
+	     "PUSH" vector-type-flag		; (e n v v vector-type-flag)
+	     "SWAP"				; (e n v vector-type-flag v)
+	     "PUSH" ptr-type-offset		; (e n v vector-type-flag v ptr-type-offset)
+	     "STOR"				; (e n v)
+	     "DUP"				; (e n v v)
+	     "ROT"				; (e v n v)
+	     "PUSH" vector-length-offset	; (e v n v vector-size-offset)
+	     "STOR"				; (e v)
+	     "SWAP"))				; (v e)
+      (assembly-make-args 2)
+      (append-instructions 
+       (list "PUSH" (asm-label-reference "vector_fill")))
+      (assembly-tailcall))
+
     (begin
       (assembly-builtin-header "make_string")
       (assembly-env-val 0 0)							; (n)
@@ -1063,11 +1089,11 @@
       (assembly-tailcall))
 
     (begin
-      (assembly-builtin-header "string_ref")
+      (assembly-builtin-header "vector_ref")
       (assembly-env-val 0 0)
       (assembly-env-val 0 1)
       (append-instructions 
-       (list "PUSH" string-chars-offset
+       (list "PUSH" vector-elems-offset
 	     "ADD"
 	     "LOAD"))
       (assembly-funret))			    
