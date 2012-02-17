@@ -808,7 +808,7 @@ int main(int argc, char *argv[])
 	exit(1);
       }
       memory[PTR_TARGET(STACK(1)) + NUM_TO_NATIVE(STACK(0))] = STACK(2);
-      STACK_POP();
+      STACK(2) = STACK(1); /* leave the pointer on the top of the stack */
       STACK_POP();
       STACK_POP();
     }while(0)

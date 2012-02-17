@@ -224,18 +224,6 @@
 	  (append-instructions (cdr inss))))))
 
 
-; append assembly code for storing a value to the next free
-; heap cell.
-; (val)  -> (hp) , hp' = hp+1, heap[hp] = val
-(define store-to-heap (lambda ()
-			(append-instructions
-			 (list "PUSH" (asm-number 1)   ; (thing 1)
-			       "ALOC"                  ; (thing hp)
-			       "DUP"                   ; (thing hp hp)
-			       "ROT"                   ; (hp thing hp)
-			       "PUSH" (asm-number 0)   ; (hp thing hp 0)
-			       "STOR"))))
-
 ;
 ; We're now actually into the guts of the compiler.  
 ; The conventions are as follows:
@@ -280,14 +268,10 @@
 (define assembly-cons (lambda ()
 			(append-instructions 
 			 (list "PUSH" asm-consbox-size		; (car cdr 2)
-			       "ALOC"				; (car cdr &hp)
-			       "DUP"				; (car cdr hp hp)
-			       "ROT"				; (car hp cdr hp)
-			       "PUSH" consbox-cdr-offset	; (car hp cdr hp 1)
+			       "ALOC"				; (car cdr hp)
+			       "PUSH" consbox-cdr-offset	; (car cdr hp 1)
 			       "STOR"				; (car hp) cdr stored
-			       "DUP"				; (car hp hp)
-			       "ROT"				; (hp car hp)
-			       "PUSH" consbox-car-offset	; (hp car hp 0)
+			       "PUSH" consbox-car-offset	; (car hp 0)
 			       "STOR"))				; (hp)  cdr stored
 			))
 
@@ -624,7 +608,8 @@
 	    (begin
 	      (append-instruction (string-append ";; Updating binding " (car (cdr l))))
 	      (assembly-env-cell (car v) (cdr v))
-	      (u-call-set-car))
+	      (u-call-set-car)
+	      (append-instruction "POP"))
 	    (begin
 	      (append-instruction  (string-append ";; Setting binding " (car (cdr l))))
 	      (set-cdr! (car top-level-env-endptr)
@@ -632,7 +617,8 @@
 			      (cdr (car top-level-env-endptr))))
 	      (set-car! top-level-env-endptr (cdr (car top-level-env-endptr)))
 	      (append-instructions (list "PUSH" (asm-label-reference label)))
-	      (u-call-set-car)))
+	      (u-call-set-car)
+	      (append-instruction "POP")))
 	r))))
   
 ; when we can detect application of a builtin
@@ -783,9 +769,7 @@
 						; arguments are allocated in assembly-funcall
       (assembly-env-cell 0 0)			; so it is guaranteed to not be shared.
       (append-instructions			; stack is (cdr &car)
-       (list "DUP"				; (cdr &car &car)                       
-	     "ROT"				; (&car cdr &car)
-	     "PUSH" consbox-cdr-offset   	; (&car cdr &car 1)
+       (list "PUSH" consbox-cdr-offset   	; (cdr &car 1)
 	     "STOR"))				; (&car)
       (assembly-funret))
 
@@ -862,7 +846,6 @@
     (begin
       (assembly-builtin-header "set_car")
       (assembly-env-val 0 1)
-      (append-instruction "DUP")
       (assembly-env-val 0 0)
       (u-call-set-car)
       (assembly-funret))
@@ -870,7 +853,6 @@
     (begin
       (assembly-builtin-header "set_cdr")
       (assembly-env-val 0 1)
-      (append-instruction "DUP")
       (assembly-env-val 0 0)
       (u-call-set-cdr)
       (assembly-funret))
@@ -986,13 +968,12 @@
     (begin
       (assembly-builtin-header "vector_set")
       (assembly-env-val 0 2)		; (c)
-      (assembly-env-val 0 0)		; (c str)
-      (assembly-env-val 0 1)		; (c str n)
+      (assembly-env-val 0 0)		; (c vec)
+      (assembly-env-val 0 1)		; (c vec n)
       (append-instructions
-       (list "PUSH" vector-elems-offset ; (c str n 2)
-	     "ADD"			; (c str (+ n 2))
-	     "STOR"))			; ()
-      (assembly-nil)
+       (list "PUSH" vector-elems-offset ; (c vec n 2)
+	     "ADD"			; (c vec (+ n 2))
+	     "STOR"))			; (vec)      
       (assembly-funret))
     
     (begin 
@@ -1006,30 +987,28 @@
 	     "SWAP"						; (n s)
 	     "DUP"						; (n s s)
 	     "ROT"						; (s n s)
-	     "DUP"						; (s n s s)
-	     "ROT"						; (s s n s)
-	     "PUSH" vector-length-offset			; (s s n s vector-length-offset)
-	     "LOAD"						; (s s n total-length)
-	     "SWAP"						; (s s total-length n)
-	     "DUP"						; (s s total-length n n)
-	     "ROT"						; (s s n total-length n)
-	     "EQ"						; (s s n (= total-length n))
-	     "PUSH" (asm-label-reference "__vector_fill_done")	; (s s n (= total-length n) @done)
-	     "JTRUE"						; (s s n)
-	     "DUP"						; (s s n n)
-	     "ROT"						; (s n s n)
-	     "PUSH" vector-elems-offset				; (s n s n offset)
-	     "ADD"))						; (s n s (+ n offset))
-      (assembly-env-val 0 1)					; (s n s (+ n offset) v)
+	     "PUSH" vector-length-offset			; (s n s vector-length-offset)
+	     "LOAD"						; (s n total-length)
+	     "SWAP"						; (s total-length n)
+	     "DUP"						; (s total-length n n)
+	     "ROT"						; (s n total-length n)
+	     "EQ"						; (s n (= total-length n))
+	     "PUSH" (asm-label-reference "__vector_fill_done")	; (s n (= total-length n) @done)
+	     "JTRUE"						; (s n)
+	     "DUP"						; (s n n)
+	     "ROT"						; (n s n)
+	     "PUSH" vector-elems-offset				; (n s n offset)
+	     "ADD"))						; (n s (+ n offset))
+      (assembly-env-val 0 1)					; (n s (+ n offset) v)
       (append-instructions
-       (list "ROT"						; (s n v s (+ n offset))
-	     "STOR"						; (s n)
-	     "PUSH" (asm-number 1)				; (s (+ n 1))
-	     "ADD"						; (s n')
+       (list "ROT"						; (n v s (+ n offset))
+	     "STOR"						; (n s)
+	     "SWAP"                                             ; (s n)
+	     "PUSH" (asm-number 1)				; (s n 1)
+	     "ADD"						; (s (+ n 1))
 	     "PUSH" (asm-label-reference "__vector_fill_loop")
 	     "JMP"
-	     (asm-label-definition "__vector_fill_done")	; (s s n)
-	     "POP"
+	     (asm-label-definition "__vector_fill_done")	; (s n)
 	     "POP"))
       (assembly-funret))
 
@@ -1043,14 +1022,11 @@
 	     "PUSH" vector-elems-offset		; (e n n vector-elems-offset)
 	     "ADD"				; (e n (+ n vector-elems-offset))
 	     "ALOC"				; (e n v)
-	     "DUP"				; (e n v v)
-	     "PUSH" vector-type-flag		; (e n v v vector-type-flag)
-	     "SWAP"				; (e n v vector-type-flag v)
-	     "PUSH" ptr-type-offset		; (e n v vector-type-flag v ptr-type-offset)
+	     "PUSH" vector-type-flag		; (e n v vector-type-flag)
+	     "SWAP"				; (e n vector-type-flag v)
+	     "PUSH" ptr-type-offset		; (e n vector-type-flag v ptr-type-offset)
 	     "STOR"				; (e n v)
-	     "DUP"				; (e n v v)
-	     "ROT"				; (e v n v)
-	     "PUSH" vector-length-offset	; (e v n v vector-size-offset)
+	     "PUSH" vector-length-offset	; (e n v vector-size-offset)
 	     "STOR"				; (e v)
 	     "SWAP"))				; (v e)
       (assembly-make-args 2)
@@ -1066,24 +1042,22 @@
 	     "PUSH" string-chars-offset      					; (n n 2)
 	     "ADD"								; (n (+ n 2))
 	     "ALOC"								; (n s)
-	     "DUP"								; (n s s)
-	     "ROT"								; (s n s)
-	     "PUSH" string-length-offset     					; (s n s 1)
+	     "PUSH" string-length-offset     					; (n s 1)
 	     "STOR"								; (s)
-	     "DUP"								; (s s)
-	     "PUSH" string-type-flag						; (s s string-type-flag)
-	     "SWAP"								; (s string-type-flag s)
-	     "PUSH" ptr-type-offset						; (s string-type-flag s 0)
+	     "PUSH" string-type-flag						; (s string-type-flag)
+	     "SWAP"								; (string-type-flag s)
+	     "PUSH" ptr-type-offset						; (string-type-flag s 0)
 	     "STOR"								; (s)
 	     ))
-      (assembly-env-val 0 1)							; (s c?)
+      (assembly-env-val 0 1)							; (s c?)      
       (append-instructions
-       (list "ISCHR"								; (s (is-char? c?))
-	     "PUSH" (asm-label-reference "__make_string_two_args")		; (s (is-char? c?) make_string_two_args)
-	     "JTRUE"))							; (s)
+       (list "DUP"
+	     "ISCHR"								; (s c? (is-char? c?))
+	     "PUSH" (asm-label-reference "__make_string_two_args")		; (s c? (is-char? c?) make_string_two_args)
+	     "JTRUE"							        ; (s c?)
+	     "POP"))								; (s)
       (assembly-funret)
-      (append-instruction (asm-label-definition "__make_string_two_args"))	; (s)
-      (assembly-env-cell 0 2)
+      (append-instruction (asm-label-definition "__make_string_two_args"))	; (s c)
       (assembly-make-args 2)
       (append-instructions (list "PUSH" (asm-label-reference "vector_fill")))
       (assembly-tailcall))
