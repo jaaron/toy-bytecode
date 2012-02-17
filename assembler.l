@@ -29,7 +29,7 @@
   static inline int32_t decode_ptr(char *text, int base1, int base2){
     char *comma;
     unsigned long addr = strtoul(text, &comma, base1);    
-    char sz = (*comma == '\0') ? 0xff : (char) (strtoul(comma+1, NULL, base2) & 0xff);
+    char sz = (*comma == '\0') ? 0 : (char) (strtoul(comma+1, NULL, base2) & PTR_SIZE_MASK);
     return PACK_PTR(addr,sz);
   }
 %}
@@ -159,7 +159,7 @@ EOF      {out_buffer[words++] = PACK_CHAR(EOF);}
 
 :{IDENT},{D_NUM} {
   int i;
-  char *comma           = strchr(yytext,',');
+  char *comma     = strchr(yytext,',');
   int32_t sz      = atoi(comma+1);
   labels[nr_labels].txt = malloc(sizeof(char)*(comma - yytext));
   memcpy(labels[nr_labels].txt, yytext+1, comma - yytext - 1);
@@ -184,7 +184,7 @@ EOF      {out_buffer[words++] = PACK_CHAR(EOF);}
 :{IDENT} {
   int i;
   labels[nr_labels].txt = strdup(yytext+1);
-  labels[nr_labels].dst = PACK_PTR(words,0xff);
+  labels[nr_labels].dst = PACK_PTR(words,0);
 #ifdef __PRINT_LABELS__
   fprintf(stderr, "label %s at offset %u unknown size\n", yytext+1, words);
 #endif

@@ -434,8 +434,6 @@ void gc(int32_t *new_heap)
     work--;
     tmp = *work;
 
-    if(PTR_SIZE(tmp) == 0xff) continue;
-
     for(i=0;i<PTR_SIZE(tmp);i++){
       val = memory[PTR_TARGET(tmp)+i];
       if(CELL_TYPE(val) == PTR){
