@@ -36,6 +36,9 @@ assembler.yy.o : assembler.yy.c
 assembler.yy.c : assembler.l interpreter.h
 	lex -o assembler.yy.c assembler.l
 
+test: schemer-bootstrap.asm schemer.asm
+	diff -q schemer-bootstrap.asm schemer.asm
+
 clean : 
 	rm -f *~ assembler.yy.c *.o *.asm *-bootstrap*
 
