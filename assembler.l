@@ -165,7 +165,9 @@ EOF      {out_buffer[words++] = PACK_CHAR(EOF);}
   memcpy(labels[nr_labels].txt, yytext+1, comma - yytext - 1);
   labels[nr_labels].txt[comma - yytext-1] = '\0';
   labels[nr_labels].dst = PACK_PTR(words, sz);
-  // fprintf(stderr, "label %s at offset %u size: %u\n", yytext+1, words, sz);
+#ifdef __PRINT_LABELS__
+ fprintf(stderr, "label %s at offset %u size: %u\n", yytext+1, words, sz);
+#endif
 
   for(i=0;i<nr_unresolved;i++){
     if(unresolved_labels[i].txt &&
@@ -183,7 +185,9 @@ EOF      {out_buffer[words++] = PACK_CHAR(EOF);}
   int i;
   labels[nr_labels].txt = strdup(yytext+1);
   labels[nr_labels].dst = PACK_PTR(words,0xff);
-  // fprintf(stderr, "label %s at offset %u unknown size\n", yytext+1, words);
+#ifdef __PRINT_LABELS__
+  fprintf(stderr, "label %s at offset %u unknown size\n", yytext+1, words);
+#endif
 
   for(i=0;i<nr_unresolved;i++){
     if(unresolved_labels[i].txt &&
