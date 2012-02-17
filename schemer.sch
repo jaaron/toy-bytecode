@@ -127,39 +127,39 @@
 ;       procedures are invoked directly.  See the functions u-call-* below.
 
 (define top-level-env 
-  (quote ((("="			 "equal_box"		 "equal")
-	   ("<"			 "less_than_box"	 "less_than")
-	   ("null?"		 "null_q_box"	         "null_q")
-	   ("cons"		 "cons_box"		 "cons")
-	   ("car"		 "car_box"		 "car")
-	   ("cdr"		 "cdr_box"		 "cdr")
-	   ("+"			 "add_box"		 "add")	   
-	   ("-"			 "subtract_box"	         "subtract")
-	   ("*"			 "multiply_box"	         "multiply")
-	   ("%"			 "modulo_box"	         "modulo")
-	   ("/"			 "divide_box"	         "divide") 	   
-	   ("print-char"	 "print_char_box"	 "print_char") 
-	   ("print-num"		 "print_num_box"	 "print_num")
-	   ("string?"		 "string_q_box"	         "string_q") 
-	   ("number?"		 "number_q_box"	         "number_q")
-	   ("char?"		 "char_q_box"	         "char_q")
-	   ("pair?"		 "pair_q_box"	         "pair_q")
-	   ("read-char"		 "read_char_box"	 "read_char")
-	   ("list"		 "list_box"		 "list")
-	   ("quit"		 "quit_box"		 "quit")
-	   ("set-car!"		 "set_car_box"	         "set_car")
-	   ("set-cdr!"		 "set_cdr_box"	         "set_cdr") 
-	   ("make-vector"        "make_vector_box"       "make_vector")
-	   ("vector-ref"         "vector_ref_box"        "vector_ref")
-	   ("vector-set!"        "vector_set_box"        "vector_set")
-	   ("vector-length"	 "vector_length_box"	 "vector_length") 
-	   ("make-string"	 "make_string_box"	 "make_string")
-	   ("string-set!"	 "string_set_box"	 "vector_set")
-	   ("string-ref"         "string_ref_box"        "vector_ref")
-	   ("string-length"	 "string_length_box"	 "vector_length") 
-	   ("char=?"		 "char_equal_box"	 "equal")     ;; for characters
-	   ("char<?"		 "char_less_than_box"    "less_than") ;; for characters
-	   ("eof-object?"	 "eof_object_q_box"	 "eof_object_q")))))
+  (quote ((("="			 "equal")
+	   ("<"			 "less_than")
+	   ("null?"	         "null_q")
+	   ("cons"		 "cons")
+	   ("car"		 "car")
+	   ("cdr"		 "cdr")
+	   ("+"			 "add")	   
+	   ("-"		         "subtract")
+	   ("*"		         "multiply")
+	   ("%"		         "modulo")
+	   ("/"		         "divide") 	   
+	   ("print-char"	 "print_char") 
+	   ("print-num"		 "print_num")
+	   ("string?"	         "string_q") 
+	   ("number?"	         "number_q")
+	   ("char?"	         "char_q")
+	   ("pair?"	         "pair_q")
+	   ("read-char"		 "read_char")
+	   ("list"		 "list")
+	   ("quit"		 "quit")
+	   ("set-car!"	         "set_car")
+	   ("set-cdr!"	         "set_cdr") 
+	   ("make-vector"	 "make_vector")
+	   ("vector-ref"	 "vector_ref")
+	   ("vector-set!"        "vector_set")
+	   ("vector-length"	 "vector_length") 
+	   ("make-string"	 "make_string")
+	   ("string-set!"	 "vector_set")
+	   ("string-ref"	 "vector_ref")
+	   ("string-length"	 "vector_length") 
+	   ("char=?"		 "equal")     ;; for characters
+	   ("char<?"		 "less_than") ;; for characters
+	   ("eof-object?"	 "eof_object_q")))))
 
 (define top-level-env-endptr (list (last (car top-level-env))))
 
@@ -196,7 +196,7 @@
     (append-named-consbox
      initial-env-label    
      (asm-label-reference 
-      (append-list-as-vector (map (lambda (l) (asm-label-reference (caddr l))) (car top-level-env))))
+      (append-list-as-vector (map (lambda (l) (asm-label-reference (cadr l))) (car top-level-env))))
      (asm-label-reference "__nil"))))
 
 ; (fresh-label) is used to generate labels for each lambda 
@@ -627,22 +627,21 @@
 ; post-env are the environments before and after the call.
 (define compile-define
   (lambda (l env rest)
-    (let ((label (fresh-label)))
-      (append-instruction (string-append ";; Definition of " (car (cdr l))))
-      (let ((v (lookup-reference (car (cdr l)) env))
-	    (r (compile-sexp (car (cdr (cdr l))) env #t)))
-	(if v
-	    (begin
-	      (append-instruction (string-append ";; Updating binding " (car (cdr l))))
-	      (assembly-set-env-val (car v) (cdr v)))
-	    (begin
-	      (assembly-set-env-val (- (length env) 1) (length (car top-level-env)))
-	      (set-cdr! (car top-level-env-endptr)
-			(cons (list (car (cdr l)) label "__nil")
-			      (cdr (car top-level-env-endptr))))
-	      (set-car! top-level-env-endptr (cdr (car top-level-env-endptr)))))
-	(append-instruction "POP")
-	r))))
+    (append-instruction (string-append ";; Definition of " (car (cdr l))))
+    (let ((v (lookup-reference (car (cdr l)) env))
+	  (r (compile-sexp (car (cdr (cdr l))) env #t)))
+      (if v
+	  (begin
+	    (append-instruction (string-append ";; Updating binding " (car (cdr l))))
+	    (assembly-set-env-val (car v) (cdr v)))
+	  (begin
+	    (assembly-set-env-val (- (length env) 1) (length (car top-level-env)))
+	    (set-cdr! (car top-level-env-endptr)
+		      (cons (list (car (cdr l)) "__nil")
+			    (cdr (car top-level-env-endptr))))
+	    (set-car! top-level-env-endptr (cdr (car top-level-env-endptr)))))
+      (append-instruction "POP")
+      r)))
   
 ; when we can detect application of a builtin
 ; we can avoid function call overhead and just inline the assembly
@@ -967,8 +966,6 @@
 	     "PUSH" true-value))
       (assembly-funret))
     
-								; list is sneaky and takes advantage of the fact
-								; that the arguments are passed in as a list.
     (begin
       (assembly-builtin-header "list")
       (assembly-env-vec 0)
