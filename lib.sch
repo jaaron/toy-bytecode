@@ -22,11 +22,11 @@
 (define map-helper      (lambda (f l ll) (if (null? l) (reverse ll) (map-helper f (cdr l) (cons (f (car l)) ll)))))
 (define map		(lambda (f l) (map-helper f l (quote ()))))
 
-(define string-fold     (lambda (f seed s start end)
+(define vector-fold     (lambda (f seed s start end)
 			  (if (>= start end) seed
-			      (string-fold f (f (string-ref s start) seed) 
-					    s (+ start 1) end))))
-
+			      (vector-fold f (f (vector-ref s start) seed) 
+					   s (+ start 1) end))))
+(define string-fold     vector-fold)
 (define sublist-helper  (lambda (l start end acc)
 			  (if (or (null? l) (= end 0)) (reverse acc)
 			      (if (= start 0)
@@ -104,8 +104,10 @@
   (lambda (l)
       (list->string-helper (make-string (length l)) l 0)))
 
-(define string->list
-  (lambda (s) (reverse (string-fold (lambda (c l) (cons c l)) nil s 0 (string-length s)))))
+(define vector->list
+  (lambda (s) (reverse (vector-fold (lambda (c l) (cons c l)) nil s 0 (vector-length s)))))
+
+(define string->list vector->list)
 
 (define string-append
   (lambda (s1 s2)

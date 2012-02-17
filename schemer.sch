@@ -52,8 +52,8 @@
 
 (define vector-type-flag     (asm-lang-const 2))
 (define vector-length-offset (asm-number 1))
-(define vector-elems-offset  (asm-number 2))
-
+(define raw-vector-elems-offset 2)
+(define vector-elems-offset  (asm-number raw-vector-elems-offset))
 (define string-type-flag     (asm-lang-const 3))
 (define string-length-offset vector-length-offset)
 (define string-chars-offset  vector-elems-offset)
@@ -140,7 +140,6 @@
 	   ("/"			 "divide_box"	         "divide") 	   
 	   ("print-char"	 "print_char_box"	 "print_char") 
 	   ("print-num"		 "print_num_box"	 "print_num")
-	   ("string-length"	 "string_length_box"	 "string_length") 
 	   ("string?"		 "string_q_box"	         "string_q") 
 	   ("number?"		 "number_q_box"	         "number_q")
 	   ("char?"		 "char_q_box"	         "char_q")
@@ -153,9 +152,11 @@
 	   ("make-vector"        "make_vector_box"       "make_vector")
 	   ("vector-ref"         "vector_ref_box"        "vector_ref")
 	   ("vector-set!"        "vector_set_box"        "vector_set")
+	   ("vector-length"	 "vector_length_box"	 "vector_length") 
 	   ("make-string"	 "make_string_box"	 "make_string")
 	   ("string-set!"	 "string_set_box"	 "vector_set")
 	   ("string-ref"         "string_ref_box"        "vector_ref")
+	   ("string-length"	 "string_length_box"	 "vector_length") 
 	   ("char=?"		 "char_equal_box"	 "equal")     ;; for characters
 	   ("char<?"		 "char_less_than_box"    "less_than") ;; for characters
 	   ("eof-object?"	 "eof_object_q_box"	 "eof_object_q")))))
@@ -176,18 +177,16 @@
   (lambda (car-value cdr-value)
     (append-named-consbox (fresh-label) car-value cdr-value)))
 
-(define append-initial-env-helper
-  (lambda (l prev-label)
-    (if (null? l) 
-	prev-label	
-	(let ((this (car l)))
-	  (let ((scheme-name (car this)) ;; ignored
-		(box-name    (car (cdr this)))
-		(box-val     (car (cdr (cdr this)))))
-	    (append-named-consbox box-name
-				  (asm-label-reference box-val)
-				  (asm-label-reference prev-label))
-	    (append-initial-env-helper (cdr l) box-name))))))
+(define append-list-as-vector 
+  (lambda (vec-list)
+    (let ((lbl (fresh-label)))
+      (append-instructions
+       (list
+	(asm-label-definition-sz lbl (+ (length vec-list) raw-vector-elems-offset))
+	vector-type-flag
+	(asm-number (length vec-list))))
+      (append-instructions vec-list)
+      lbl)))
 
 (define append-initial-env
   (lambda ()
@@ -195,9 +194,9 @@
 			  (asm-label-reference "__nil")
 			  (asm-label-reference "__nil"))
     (append-named-consbox
-     initial-env-label
-     (asm-label-reference
-      (append-initial-env-helper (reverse (car top-level-env)) "__nil"))
+     initial-env-label    
+     (asm-label-reference 
+      (append-list-as-vector (map (lambda (l) (asm-label-reference (caddr l))) (car top-level-env))))
      (asm-label-reference "__nil"))))
 
 ; (fresh-label) is used to generate labels for each lambda 
@@ -297,6 +296,19 @@
 (define u-call-set-car (lambda () (assembly-set-car)))
 (define u-call-set-cdr (lambda () (assembly-set-cdr)))
 
+(define u-call-make-vector (lambda () (append-instructions 
+				       (list
+					"PUSH" (asm-label-reference "__u_make_vector_nofill")
+					"CALL"))))
+(define u-call-vector-set  (lambda () (append-instructions 
+				       (list "PUSH" vector-elems-offset
+					     "ADD"
+					     "STOR"))))
+(define u-call-vector-ref  (lambda () (append-instructions
+				       (list "PUSH" vector-elems-offset
+					     "ADD"
+					     "LOAD"))))
+
 ; function application convention
 ; top of stack is the closure to apply, then the arguments
 ; this is tricky.  We need to cons the argument list onto 
@@ -308,10 +320,15 @@
 (define assembly-make-args-helper (lambda (nr-args)
 				    (if (= nr-args 0) #f
 					(begin 
-					  (u-call-cons)
+					  (append-instructions 
+					   (list "PUSH" (asm-number (+ nr-args -1))))
+					  (u-call-vector-set)
 					  (assembly-make-args-helper (- nr-args 1))))))
+
 (define assembly-make-args (lambda (nr-args)
-			     (assembly-nil)
+			     (append-instructions
+			      (list "PUSH"  (asm-number nr-args)))
+			     (u-call-make-vector)
 			     (assembly-make-args-helper nr-args)))
 
 ; (args clos) -> ((clos args)) 
@@ -363,24 +380,34 @@
 ; assembly-env-cell places the cons box whose car is 
 ; at the desired offsets on the stack.  
 ; assembly-env-val actually loads the value.  
-(define assembly-env-cell
-  (lambda (depth idx)
+(define assembly-env-vec
+  (lambda (depth)
     (append-instructions 
-     (list "RDRR"                     ; (env)
-	   "PUSH" (asm-number depth)  ; (env d)
-	   "PUSH" (asm-label-reference "__u_nth_cell")     ; (env d u_nth)
+     (list "RDRR"					; (env)
+	   "PUSH" (asm-number depth)			; (env d)
+	   "PUSH" (asm-label-reference "__u_nth_cell")  ; (env d u_nth)
 	   "CALL"))
-    (u-call-car)                      ; ((nth env depth))
-    (append-instructions
-     (list "PUSH" (asm-number idx)    ; ((nth env depth) idx)
-	   "PUSH" (asm-label-reference "__u_nth_cell")     ; ((nth env depth) idx u_nth)
-	   "CALL"                     ; ((nth (nth env depth) idx))
-    ))))
-
-(define assembly-env-val 
-  (lambda (depth idx)
-    (assembly-env-cell depth idx)
     (u-call-car)))
+
+(define assembly-env-val
+  (lambda (depth idx)
+    (assembly-env-vec depth)
+    (append-instructions
+     (list "PUSH" (asm-number idx)))			; ((nth env depth) idx)
+    (u-call-vector-ref)
+    ))
+
+(define assembly-set-env-val
+  (lambda (depth idx)
+    (assembly-env-vec depth)
+    (append-instructions
+     (list "PUSH" (asm-number idx)))
+    (u-call-vector-set)))
+
+;; (define assembly-env-val 
+;;   (lambda (depth idx)
+;;     (assembly-env-cell depth idx)
+;;     (u-call-car)))
 
 (define assembly-nil      
   (lambda ()
@@ -604,21 +631,17 @@
       (append-instruction (string-append ";; Definition of " (car (cdr l))))
       (let ((v (lookup-reference (car (cdr l)) env))
 	    (r (compile-sexp (car (cdr (cdr l))) env #t)))
-	(if v 
+	(if v
 	    (begin
 	      (append-instruction (string-append ";; Updating binding " (car (cdr l))))
-	      (assembly-env-cell (car v) (cdr v))
-	      (u-call-set-car)
-	      (append-instruction "POP"))
+	      (assembly-set-env-val (car v) (cdr v)))
 	    (begin
-	      (append-instruction  (string-append ";; Setting binding " (car (cdr l))))
+	      (assembly-set-env-val (- (length env) 1) (length (car top-level-env)))
 	      (set-cdr! (car top-level-env-endptr)
 			(cons (list (car (cdr l)) label "__nil")
 			      (cdr (car top-level-env-endptr))))
-	      (set-car! top-level-env-endptr (cdr (car top-level-env-endptr)))
-	      (append-instructions (list "PUSH" (asm-label-reference label)))
-	      (u-call-set-car)
-	      (append-instruction "POP")))
+	      (set-car! top-level-env-endptr (cdr (car top-level-env-endptr)))))
+	(append-instruction "POP")
 	r))))
   
 ; when we can detect application of a builtin
@@ -757,20 +780,14 @@
        (list 
 	(asm-label-definition "__u_cons")	; this is the internal entry point
 						; stack is (car cdr rp)
-	"ROT"))					; stack is (rp  car cdr)
-      (assembly-cons)				; this is the internal cons used when building arg lists
-      (assembly-funret)
-      
-      (assembly-builtin-header "cons")          ; this is the exposed cons, it plays a little trick
-						; with the environment list by loading the second arg,
-						; grabbing the cons box containing the first arg,
-      (assembly-env-val 0 1)			; then overwriting the cdr pointer and returning.
-						; this is safe since the cons boxes surrounding the 
-						; arguments are allocated in assembly-funcall
-      (assembly-env-cell 0 0)			; so it is guaranteed to not be shared.
-      (append-instructions			; stack is (cdr &car)
-       (list "PUSH" consbox-cdr-offset   	; (cdr &car 1)
-	     "STOR"))				; (&car)
+	"ROT"
+	"PUSH" (asm-label-reference "__cons_body")
+	"JMP"))					; stack is (rp  car cdr)      
+      (assembly-builtin-header "cons")
+      (assembly-env-val 0 0)
+      (assembly-env-val 0 1)
+      (append-instruction (asm-label-definition "__cons_body"))
+      (assembly-cons)
       (assembly-funret))
 
     (begin
@@ -792,7 +809,6 @@
 	; these aren't used internally so we just define them.
     (begin 
       (assembly-builtin-header "add")
-      (append-instruction (asm-label-definition "__add"))
       (assembly-env-val 0 0)
       (assembly-env-val 0 1)
       (append-instruction "ADD")
@@ -955,12 +971,15 @@
 								; that the arguments are passed in as a list.
     (begin
       (assembly-builtin-header "list")
-      (assembly-env-cell 0 0)
-      (assembly-funret))
-
+      (assembly-env-vec 0)
+      (assembly-make-args 1)
+      (let ((vector->list (lookup-reference "vector->list" top-level-env)))
+	(assembly-env-val (+ (car vector->list) 1) (cdr vector->list)))
+      (assembly-tailcall))
+   
 	; getting the length of a string is easy
     (begin
-      (assembly-builtin-header "string_length")
+      (assembly-builtin-header "vector_length")
       (assembly-env-val 0 0)
       (append-instructions (list "PUSH" string-length-offset "LOAD"))
       (assembly-funret))
@@ -1013,22 +1032,28 @@
       (assembly-funret))
 
     (begin 
+      (append-instructions 
+       (list (asm-label-definition "__u_make_vector_nofill")	; (n rp)
+	     "SWAP"						; (rp n)
+	     (asm-label-definition "__u_make_vector_nofill_body")
+	     "DUP"						; (n n)
+	     "PUSH" vector-elems-offset				; (n n vector-elems-offset)
+	     "ADD"						; (n (+ n vector-elems-offset))
+	     "ALOC"						; (n v)
+	     "PUSH" vector-type-flag				; (n v vector-type-flag)
+	     "SWAP"						; (n vector-type-flag v)
+	     "PUSH" ptr-type-offset				; (n vector-type-flag v ptr-type-offset)
+	     "STOR"						; (n v)
+	     "PUSH" vector-length-offset			; (n v vector-size-offset)
+	     "STOR"						; (v)
+	     "RET"))
       (assembly-builtin-header "make_vector")
-      (assembly-env-val 0 1)                    ; (e)
-      (assembly-env-val 0 0)			; (e n)
+      (assembly-env-val 0 0)					; n
       (append-instructions
-       (list (asm-label-definition "__u_make_vector")
-	     "DUP"				; (e n n)
-	     "PUSH" vector-elems-offset		; (e n n vector-elems-offset)
-	     "ADD"				; (e n (+ n vector-elems-offset))
-	     "ALOC"				; (e n v)
-	     "PUSH" vector-type-flag		; (e n v vector-type-flag)
-	     "SWAP"				; (e n vector-type-flag v)
-	     "PUSH" ptr-type-offset		; (e n vector-type-flag v ptr-type-offset)
-	     "STOR"				; (e n v)
-	     "PUSH" vector-length-offset	; (e n v vector-size-offset)
-	     "STOR"				; (e v)
-	     "SWAP"))				; (v e)
+       (list 
+	"PUSH" (asm-label-reference "__u_make_vector_nofill_body")
+	"CALL"))						; (v)
+      (assembly-env-val 0 1)					; (v e)
       (assembly-make-args 2)
       (append-instructions 
        (list "PUSH" (asm-label-reference "vector_fill")))
