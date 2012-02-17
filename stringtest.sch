@@ -20,7 +20,7 @@
 
 (let ((x  (make-string 8 #\c)))
   (string-set! x 6 #\d)
-  (print-string x)
+  (display x)
 )
 
 (print-char #\newline)
