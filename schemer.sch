@@ -57,7 +57,7 @@
 (define string-type-flag     (asm-lang-const 3))
 (define string-length-offset vector-length-offset)
 (define string-chars-offset  vector-elems-offset)
-(define symbol-type-flag (asm-lang-const 3))
+(define symbol-type-flag     (asm-lang-const 3))
 
 
 
@@ -71,8 +71,10 @@
 (define special-forms 
   (lambda ()
     (list
+     (cons "set!"   compile-set!)    
      (cons "lambda" compile-lambda)
      (cons "let"    compile-let)
+     (cons "letrec" compile-letrec)
      (cons "if"     compile-if)
      (cons "define" compile-define)  
      (cons "begin"  compile-begin)
@@ -82,26 +84,24 @@
 
 ; search the list of builtin forms for a 
 ; particular form
-(define find-special-helper
-  (lambda (f ss)
-    (if (null? ss) #f
-	(if (not (string? f)) #f
-	    (if (string=? f (car (car ss))) (cdr (car ss))
-		(find-special-helper f (cdr ss)))))))
-    
-(define find-special 
-  (lambda (f) (find-special-helper f (special-forms))))    
+   
+(define find-special
+    (lambda (f) 
+      (letrec ((helper (lambda (ss)
+			 (if (null? ss) #f
+			     (if (not (string? f)) #f
+				 (if (string=? f (car (car ss))) (cdr (car ss))
+				     (helper (cdr ss))))))))
+	(helper (special-forms)))))
 
 ; The top-level-env is a list containing the list of symbols 
-; defined by the compiler at the top level. It is very important
-; that the order of symbols be the reverse of the order defined 
-; the top-level-env-asm list below.  
+; defined by the compiler at the top level.
 ;
-; The runtime environment is represented as a list of lists
-; references to symbols are replaced with a traversal of this structure
-; based on the level of enclosing scope where the symbol was defined, and
-; the index of the variable in that scope.  This is taken directly from the
-; SECD machine's representation of the environment. 
+; The runtime environment is represented as a list of vectors
+; references to symbols are replaced with a traversal of this
+; structure based on the level of enclosing scope where the symbol was
+; defined, and the index of the variable in that scope.  This is taken
+; directly from the SECD machine's representation of the environment.
 ;
 ; For example suppose we have something like:
 ;   (((lambda (x) 
@@ -113,18 +113,20 @@
 ; different symbols:  '+' 'x' and 'z' that are each declared at a different depth
 ; in the enclosing environment. 
 ; When this lambda is evaluated (with the argument 7) the environment will look like:
-;   ((7)
-;    (5)
-;    ("=" "null?" "cons" "car" "cdr" "+" ...))
+;   ([7]
+;    [5]
+;    ["=" "null?" "cons" "car" "cdr" "+" ...])
 ;
-; So the reference to symbol 'z' will be compiled to (car (car env))
-;    the reference to symbol 'x' will be compiled to (car (car (cdr env))) and
-;    the reference to symbol '+' will be compiled to (car (cdr (cdr (cdr (cdr (car (cdr (cdr env))))))))
+; So the reference to symbol 'z' will be compiled to (vector-ref (car env) 0)
+;    the reference to symbol 'x' will be compiled to (vector-ref (car (cdr env)) 0) and
+;    the reference to symbol '+' will be compiled to (vector-ref (car (cdr (cdr env))) 5)
 ;
-; Note: this isn't strictly accurate since the symbols 'car' and 'cdr' are themselves
-;       defined in the environment and would thus require lookups making this expansion
-;       impossible.  What really happens is that a non-closure form of the car and cdr 
-;       procedures are invoked directly.  See the functions u-call-* below.
+; Note: this isn't strictly accurate since the symbols 'vector-ref',
+;       'car' and 'cdr' are themselves defined in the environment and
+;       would thus require lookups making this expansion impossible.
+;       What really happens is that a non-closure form of the car and
+;       cdr procedures are invoked directly.  See the functions
+;       u-call-* below.
 
 (define top-level-env 
   (quote ((("="			 "equal")
@@ -161,7 +163,7 @@
 	   ("char<?"		 "less_than") ;; for characters
 	   ("eof-object?"	 "eof_object_q")))))
 
-(define top-level-env-endptr (list (last (car top-level-env))))
+(define top-level-env-endptr  (last (car top-level-env)))
 
 (define initial-env-label "__initial_environment")
 
@@ -201,10 +203,10 @@
 
 ; (fresh-label) is used to generate labels for each lambda 
 ; expression and for string constants.  
-(define label-counter (cons 0 '()))
+(define label-counter 0)
 (define fresh-label (lambda ()
-		      (set-car! label-counter (+ (car label-counter) 1))
-		      (string-append "__anonymous" (number->string (car label-counter)))
+		      (set! label-counter (+ label-counter 1))
+		      (string-append "__anonymous" (number->string label-counter))
 		      ))
 
 ; append an instruction to the ouptut stream
@@ -331,6 +333,32 @@
 			     (u-call-make-vector)
 			     (assembly-make-args-helper nr-args)))
 
+;; special case for referencing arguments to this function (i.e., depth = 0).
+(define assembly-get-arg
+  (lambda (idx)
+    (append-instruction "RDRR")
+    (u-call-car)
+    (append-instructions
+     (list "PUSH" (asm-number (+ raw-vector-elems-offset idx))
+	   "LOAD"))))
+
+(define assembly-set-arg
+  (lambda (idx)
+    (append-instruction "RDRR")
+    (u-call-car)
+    (append-instructions 
+     (list "PUSH" (asm-number (+ raw-vector-elems-offset idx))
+	   "STOR"
+	   "POP"))))
+
+(define assembly-nrargs
+  (lambda ()
+    (append-instruction "RDRR")
+    (u-call-car)
+    (append-instructions 
+     (list "PUSH" vector-length-offset
+	   "LOAD"))))
+
 ; (args clos) -> ((clos args)) 
 (define assembly-funcall (lambda ()
 			   (append-instruction "DUP")      ; (args clos clos)
@@ -390,12 +418,22 @@
     (u-call-car)))
 
 (define assembly-env-val
-  (lambda (depth idx)
-    (assembly-env-vec depth)
-    (append-instructions
-     (list "PUSH" (asm-number idx)))			; ((nth env depth) idx)
-    (u-call-vector-ref)
-    ))
+  (lambda (env-length depth idx)
+    (if (= env-length (+ depth 1))  ;; getting something from top-level-env
+	(begin
+	  (append-instructions 
+	   (list "PUSH" (asm-label-reference initial-env-label)))
+	  (u-call-car)
+	  (append-instructions 
+	   (list "PUSH" (asm-number (+ raw-vector-elems-offset idx))
+		 "LOAD")))
+	(if (= depth 0) 
+	    (assembly-get-arg idx)
+	    (begin
+	      (assembly-env-vec depth)
+	      (append-instructions
+	       (list "PUSH" (asm-number idx)))
+	      (u-call-vector-ref))))))
 
 (define assembly-set-env-val
   (lambda (depth idx)
@@ -403,11 +441,6 @@
     (append-instructions
      (list "PUSH" (asm-number idx)))
     (u-call-vector-set)))
-
-;; (define assembly-env-val 
-;;   (lambda (depth idx)
-;;     (assembly-env-cell depth idx)
-;;     (u-call-car)))
 
 (define assembly-nil      
   (lambda ()
@@ -494,7 +527,7 @@
 	       (string-append "\"" (string-append s "\""))))
 	#f))))
 
-; this doesn't handle escaped chars except newline.
+; this doesn't handle escaped chars except newline, tab, quote, double quote and backslash
 (define compile-char
   (lambda (s env)
     (append-instructions 
@@ -521,7 +554,7 @@
       (if i 
 	  (begin
 	    (append-instruction (string-append ";; Resolving symbol " r))
-	    (assembly-env-val (car i) (cdr i))
+	    (assembly-env-val (length env) (car i) (cdr i))
 	    (append-instruction (string-append ";; Resolved symbol " r)))
 	  ;; this is an error
 	  (begin
@@ -579,24 +612,46 @@
 
 (define compile-let
   (lambda (l env rest)
-    (let ((lbl (fresh-label))
-	  (r1 (compile-let-bindings (car (cdr l)) env))
+    (let ((r1 (compile-let-bindings (car (cdr l)) env))
 	  (e (map (lambda (x) (car x)) (car (cdr l)))))
       (assembly-make-args (length (cadr l)))
-      (append-instructions (list "RDRR" "PUSH" (asm-label-reference lbl)))
+      (append-instructions (list "RDRR"))
       (u-call-cons)
-      (if rest
-	  (assembly-funcall)
-	  (assembly-tailcall))
-      (lambda ()
-	(do-compile-task r1)
-	(do-compile-task 
-	 (lambda ()
-	   (append-instruction (asm-label-definition lbl))
-	   (let ((r (compile-sequence (cdr (cdr l)) (cons e env) rest)))
-	     (assembly-funret)
-	     r)))
+      (append-instruction "WTRR")
+      (let ((r2 (compile-sequence (cdr (cdr l)) (cons e env) rest)))
+	(if rest
+	    (begin
+	      (append-instruction "RDRR")
+	      (u-call-cdr)
+	      (append-instruction "WTRR"))
+	    #f)
+	(lambda ()
+	  (do-compile-task r1)
+	  (do-compile-task r2))
 	))))
+
+(define compile-set! 
+  (lambda (l env rest)
+    (let ((cell-id (lookup-reference (cadr l) env)))
+      (let ((r (compile-sexp (caddr l) env #t)))
+	(assembly-set-env-val (car cell-id) (cdr cell-id))
+	r))))
+
+(define compile-letrec
+  (lambda (l env rest)
+    (letrec ((empty-binders (map (lambda (b) (list (car b) (list "quote" '())))
+				 (cadr l)))
+	     (helper        (lambda (binders body)
+			      (if (null? binders) body
+				  (helper (cdr binders)
+					  (cons (cons "set!" (car binders))
+						body))))))
+      (compile-sexp 
+       (cons "let" 
+	     (cons empty-binders
+		   (helper (reverse (cadr l))
+			   (cddr l))))
+       env rest))))
 
 (define compile-begin
   (lambda (l env rest) (compile-sequence (cdr l) env rest)))
@@ -636,10 +691,10 @@
 	    (assembly-set-env-val (car v) (cdr v)))
 	  (begin
 	    (assembly-set-env-val (- (length env) 1) (length (car top-level-env)))
-	    (set-cdr! (car top-level-env-endptr)
+	    (set-cdr! top-level-env-endptr
 		      (cons (list (car (cdr l)) "__nil")
-			    (cdr (car top-level-env-endptr))))
-	    (set-car! top-level-env-endptr (cdr (car top-level-env-endptr)))))
+			    (cdr top-level-env-endptr)))
+	    (set! top-level-env-endptr (cdr top-level-env-endptr))))
       (append-instruction "POP")
       r)))
   
@@ -725,23 +780,11 @@
 	      (do-compile-task r2)))))))
 
 (define compile-sexp 
-  (lambda (s env rest) 
+  (lambda (s env rest)
     (if (list? s) 
 	(compile-list s env rest) 
 	(compile-atom s env #f))))
 
-
-; The builtin functions are a little peculiar.
-; The convention is 
-;     :foo is the closure cell for the foo function,
-;     :__foo is the entry point when called as a closure
-;            (i.e., arguments are retrieved from the env pointer)
-;     :__u_foo is the entry point for internal invocations
-;            (e.g., during closure invocation). arguments are read
-;            from below the rp on the stack
-;     :__foo_body is the actual implementation of foo,  arguments
-;            are read from the top of stack
-;
 (define assembly-builtin-header 
   (lambda (name)
     (let ((uu-name (string-append "__" name)))
@@ -783,15 +826,15 @@
 	"PUSH" (asm-label-reference "__cons_body")
 	"JMP"))					; stack is (rp  car cdr)      
       (assembly-builtin-header "cons")
-      (assembly-env-val 0 0)
-      (assembly-env-val 0 1)
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)
       (append-instruction (asm-label-definition "__cons_body"))
       (assembly-cons)
       (assembly-funret))
 
     (begin
       (assembly-builtin-header "car")
-      (assembly-env-val 0 0)					; stack is (renv rp arg)
+      (assembly-get-arg 0)					; stack is (renv rp arg)
       (append-instruction (asm-label-definition "__car_body"))	; now we're at the body
       (assembly-car)						; dump the assembly for car
       (assembly-funret))					; and a return statement
@@ -799,7 +842,7 @@
 								; this is completely analogous to above
     (begin
       (assembly-builtin-header "cdr")
-      (assembly-env-val 0 0)
+      (assembly-get-arg 0)
       (append-instruction (asm-label-definition "__cdr_body"))
       (assembly-cdr)
       (assembly-funret))
@@ -808,67 +851,67 @@
 	; these aren't used internally so we just define them.
     (begin 
       (assembly-builtin-header "add")
-      (assembly-env-val 0 0)
-      (assembly-env-val 0 1)
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)
       (append-instruction "ADD")
       (assembly-funret))
 
     (begin
       (assembly-builtin-header "subtract")
-      (assembly-env-val 0 0)
-      (assembly-env-val 0 1)    
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)    
       (append-instruction "SUB")
       (assembly-funret))
 
     (begin
       (assembly-builtin-header "multiply")
-      (assembly-env-val 0 0)
-      (assembly-env-val 0 1)
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)
       (append-instruction "MUL")
       (assembly-funret))
 
     (begin
       (assembly-builtin-header "divide")
-      (assembly-env-val 0 0)
-      (assembly-env-val 0 1)
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)
       (append-instruction "DIV")
       (assembly-funret))
 
     (begin
       (assembly-builtin-header "modulo")
-      (assembly-env-val 0 0)
-      (assembly-env-val 0 1)
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)
       (append-instruction "MOD")
       (assembly-funret))
 
 	; equality comparison
     (begin 
       (assembly-builtin-header "equal")
-      (assembly-env-val 0 0)
-      (assembly-env-val 0 1)
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)
       (append-instruction "EQ")
       (assembly-funret))
 
 	; less than comparison
     (begin 
       (assembly-builtin-header "less_than")
-      (assembly-env-val 0 1)
-      (assembly-env-val 0 0)
+      (assembly-get-arg 1)
+      (assembly-get-arg 0)
       (append-instruction "LT")
       (assembly-funret))
     
 	; assignments
     (begin
       (assembly-builtin-header "set_car")
-      (assembly-env-val 0 1)
-      (assembly-env-val 0 0)
+      (assembly-get-arg 1)
+      (assembly-get-arg 0)
       (u-call-set-car)
       (assembly-funret))
     
     (begin
       (assembly-builtin-header "set_cdr")
-      (assembly-env-val 0 1)
-      (assembly-env-val 0 0)
+      (assembly-get-arg 1)
+      (assembly-get-arg 0)
       (u-call-set-cdr)
       (assembly-funret))
 
@@ -876,26 +919,26 @@
 	; questions
     (begin
       (assembly-builtin-header "null_q")
-      (assembly-env-val 0 0)
+      (assembly-get-arg 0)
       (assembly-nil)
       (append-instruction "EQ")
       (assembly-funret))
 
     (begin
       (assembly-builtin-header "char_q")
-      (assembly-env-val 0 0)
+      (assembly-get-arg 0)
       (append-instruction "ISCHR")
       (assembly-funret))
 
     (begin
       (assembly-builtin-header "number_q")
-      (assembly-env-val 0 0)
+      (assembly-get-arg 0)
       (append-instruction "ISNUM")
       (assembly-funret))
 
     (begin
       (assembly-builtin-header "string_q")
-      (assembly-env-val 0 0)
+      (assembly-get-arg 0)
       (append-instructions 
        (list "DUP" 
 	     "ISPTR"
@@ -915,13 +958,13 @@
     
     (begin
       (assembly-builtin-header "print_num")
-      (assembly-env-val 0 0)
+      (assembly-get-arg 0)
       (append-instructions (list "DUP" "PINT"))
       (assembly-funret))
 
     (begin
       (assembly-builtin-header "print_char")
-      (assembly-env-val 0 0)
+      (assembly-get-arg 0)
       (append-instructions (list "DUP" "PCHR"))
       (assembly-funret))
 
@@ -936,7 +979,7 @@
 
     (begin
       (assembly-builtin-header "pair_q")
-      (assembly-env-val 0 0)
+      (assembly-get-arg 0)
       (append-instructions 
        (list "DUP"						; (rp x x)
 	     "ISPTR"						; (rp x)
@@ -971,21 +1014,21 @@
       (assembly-env-vec 0)
       (assembly-make-args 1)
       (let ((vector->list (lookup-reference "vector->list" top-level-env)))
-	(assembly-env-val (+ (car vector->list) 1) (cdr vector->list)))
+	(assembly-env-val 1 0 (cdr vector->list)))
       (assembly-tailcall))
    
 	; getting the length of a string is easy
     (begin
       (assembly-builtin-header "vector_length")
-      (assembly-env-val 0 0)
+      (assembly-get-arg 0)
       (append-instructions (list "PUSH" string-length-offset "LOAD"))
       (assembly-funret))
     
     (begin
       (assembly-builtin-header "vector_set")
-      (assembly-env-val 0 2)		; (c)
-      (assembly-env-val 0 0)		; (c vec)
-      (assembly-env-val 0 1)		; (c vec n)
+      (assembly-get-arg 2)		; (c)
+      (assembly-get-arg 0)		; (c vec)
+      (assembly-get-arg 1)		; (c vec n)
       (append-instructions
        (list "PUSH" vector-elems-offset ; (c vec n 2)
 	     "ADD"			; (c vec (+ n 2))
@@ -994,7 +1037,7 @@
     
     (begin 
       (assembly-builtin-header "vector_fill")
-      (assembly-env-val 0 0)					; (s)
+      (assembly-get-arg 0)					; (s)
       
       (append-instructions 
        (list "PUSH" (asm-number 0)))				; (s 0)
@@ -1015,7 +1058,7 @@
 	     "ROT"						; (n s n)
 	     "PUSH" vector-elems-offset				; (n s n offset)
 	     "ADD"))						; (n s (+ n offset))
-      (assembly-env-val 0 1)					; (n s (+ n offset) v)
+      (assembly-get-arg 1)					; (n s (+ n offset) v)
       (append-instructions
        (list "ROT"						; (n v s (+ n offset))
 	     "STOR"						; (n s)
@@ -1045,20 +1088,19 @@
 	     "STOR"						; (v)
 	     "RET"))
       (assembly-builtin-header "make_vector")
-      (assembly-env-val 0 0)					; n
+      (assembly-get-arg 0)					; n
       (append-instructions
        (list 
 	"PUSH" (asm-label-reference "__u_make_vector_nofill_body")
 	"CALL"))						; (v)
-      (assembly-env-val 0 1)					; (v e)
-      (assembly-make-args 2)
+      (assembly-set-arg 0)
       (append-instructions 
-       (list "PUSH" (asm-label-reference "vector_fill")))
-      (assembly-tailcall))
+       (list "PUSH" (asm-label-reference "vector_fill") 
+	     "JMP")))
 
     (begin
       (assembly-builtin-header "make_string")
-      (assembly-env-val 0 0)							; (n)
+      (assembly-get-arg 0)							; (n)
       (append-instructions 
        (list "DUP"								; (n n)
 	     "PUSH" string-chars-offset      					; (n n 2)
@@ -1071,23 +1113,23 @@
 	     "PUSH" ptr-type-offset						; (string-type-flag s 0)
 	     "STOR"								; (s)
 	     ))
-      (assembly-env-val 0 1)							; (s c?)      
-      (append-instructions
-       (list "DUP"
-	     "ISCHR"								; (s c? (is-char? c?))
-	     "PUSH" (asm-label-reference "__make_string_two_args")		; (s c? (is-char? c?) make_string_two_args)
-	     "JTRUE"							        ; (s c?)
-	     "POP"))								; (s)
+      (assembly-nrargs) ; (s nr-args)
+      (append-instructions 
+       (list "PUSH" (asm-number 2) ; (s nr-args 2)
+	     "EQ"                  ; (s (= nr-args 2))
+	     "PUSH" (asm-label-reference "__make_string_two_args")		; (s (is-char? c?) make_string_two_args)
+	     "JTRUE"))								; (s)
       (assembly-funret)
-      (append-instruction (asm-label-definition "__make_string_two_args"))	; (s c)
-      (assembly-make-args 2)
-      (append-instructions (list "PUSH" (asm-label-reference "vector_fill")))
-      (assembly-tailcall))
+      (append-instruction (asm-label-definition "__make_string_two_args"))	; (s)
+      (assembly-set-arg 0)
+      (append-instructions 
+       (list "PUSH" (asm-label-reference "vector_fill")
+	     "JMP")))
 
     (begin
       (assembly-builtin-header "vector_ref")
-      (assembly-env-val 0 0)
-      (assembly-env-val 0 1)
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)
       (append-instructions 
        (list "PUSH" vector-elems-offset
 	     "ADD"
@@ -1096,7 +1138,7 @@
     
     (begin 
       (assembly-builtin-header "eof_object_q")
-      (assembly-env-val 0 0)
+      (assembly-get-arg 0)
       (append-instructions
        (list "PUSH" "EOF" "EQ"))
       (assembly-funret))))
@@ -1165,12 +1207,6 @@
 				(cons "#\\;" (read-char))
 				(let ((r (reader-state-wordchar c)))
 				  (cons (string-append "#\\" (car r)) (cdr r))))))))))))
-;; (define reader-state-hash-backslash 
-;;   (lambda (c)
-;;     (if (is-delimiter? c)
-;; 	(cons (string-append "#\\" (make-string 1 c)) (read-char))
-;; 	(let ((r (reader-state-wordchar c)))
-;; 	  (cons (string-append "#\\" (car r)) (cdr r))))))
 
 (define reader-state-hash
   (lambda (c)
@@ -1184,16 +1220,15 @@
 		  (display "ERROR: Unrecognized # sequence\n")
 		  (quit)))))))
 
-(define reader-state-wordchar-helper
-  (lambda (c)
-    (if (eof-object? c) (cons '() c)
-	(if (is-delimiter? c) (cons '() c)
-	    (let ((r (reader-state-wordchar-helper (read-char))))
-	      (cons (cons c (car r)) (cdr r)))))))
-
 (define reader-state-wordchar
-  (lambda (c) (let ((r (reader-state-wordchar-helper c)))
-		 (cons (list->string (car r)) (cdr r)))))
+  (lambda (c) 
+    (letrec ((helper (lambda (c)
+		       (if (eof-object? c) (cons '() c)
+			   (if (is-delimiter? c) (cons '() c)
+			       (let ((r (helper (read-char))))
+				 (cons (cons c (car r)) (cdr r))))))))
+      (let ((r (helper c)))
+	(cons (list->string (car r)) (cdr r))))))
 
 (define reader-state-semicolon 
   (lambda (c) 
@@ -1250,15 +1285,15 @@
 				    (reader-state-semicolon (read-char))			     
 				    (reader-state-wordchar c)))))))))))
 
-(define look-ahead (cons #f '()))
+(define look-ahead #f)
 (define next-token
   (lambda ()
-    (let ((z (if (car look-ahead)
-		 (reader-state-entrance (car look-ahead))
+    (let ((z (if look-ahead
+		 (reader-state-entrance look-ahead)
 		 (reader-state-entrance (read-char)))))
       (if z
 	  (begin
-	    (set-car! look-ahead (cdr z))	    
+	    (set! look-ahead (cdr z))	    
 	    (car z))
 	  z))))
 
