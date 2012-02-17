@@ -13,20 +13,20 @@
 
   static struct {    //  1024 labels should be sufficient since
     char *txt;      //  a program is at the moment at most 1024 
-    int32_t dst;       //  words
+    word dst;       //  words
   } labels[MEM_SIZE]; 
   static int nr_labels =0;
 
   static struct {
       char *txt;
-      uint32_t dst;
+      word dst;
   } unresolved_labels[MEM_SIZE];
-  static int32_t nr_unresolved = 0;
+  static word nr_unresolved = 0;
 
-  static uint32_t out_buffer[MEM_SIZE];
-  static uint32_t words = 0;
-  static uint32_t __line_number=0;
-  static inline int32_t decode_ptr(char *text, int base1, int base2){
+  static word out_buffer[MEM_SIZE];
+  static word words = 0;
+  static word __line_number=0;
+  static inline word decode_ptr(char *text, int base1, int base2){
     char *comma;
     unsigned long addr = strtoul(text, &comma, base1);    
     char sz = (*comma == '\0') ? 0 : (char) (strtoul(comma+1, NULL, base2) & PTR_SIZE_MASK);
@@ -160,7 +160,7 @@ EOF      {out_buffer[words++] = PACK_CHAR(EOF);}
 :{IDENT},{D_NUM} {
   int i;
   char *comma     = strchr(yytext,',');
-  int32_t sz      = atoi(comma+1);
+  word sz      = atoi(comma+1);
   labels[nr_labels].txt = malloc(sizeof(char)*(comma - yytext));
   memcpy(labels[nr_labels].txt, yytext+1, comma - yytext - 1);
   labels[nr_labels].txt[comma - yytext-1] = '\0';
@@ -246,7 +246,7 @@ int main(int argc, char *argv[])
     fprintf(stderr, "Dying From Failure\n");
     exit(1);
   }
-  write(output_filedes, out_buffer, words*sizeof(int32_t));
+  write(output_filedes, out_buffer, words*sizeof(word));
   fprintf(stderr, "Read %d lines. Wrote %u words\n", __line_number, words);
   close(output_filedes);
   return 0;

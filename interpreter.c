@@ -73,30 +73,30 @@
    stack space (depending on which heap is live) at which point the
    garbage collector is invoked.
 */
-static int32_t memory[MEM_SIZE];          /* all of memory */
+static word memory[MEM_SIZE];          /* all of memory */
 
-static int32_t *sp = &memory[MEM_SIZE-1]; /* The top 256 words of memory
+static word *sp = &memory[MEM_SIZE-1]; /* The top 256 words of memory
 					     are reserved for the stack */
 
-static int32_t *prog_end;                 /* pointer to the end of the
+static word *prog_end;                 /* pointer to the end of the
 					     loaded program text */
 
-static int32_t *pc = memory;              /* the program counter */
+static word *pc = memory;              /* the program counter */
 
-static int32_t heap_size;                 /* maximum size of a heap
+static word heap_size;                 /* maximum size of a heap
 					     (computed based on
 					     prog_end) */
 
-static int32_t *upper_heap;               /* upper_heap == prog_end + heap_size; */
+static word *upper_heap;               /* upper_heap == prog_end + heap_size; */
 
-static int32_t *heap_base;                /* pointer to the first cell of
+static word *heap_base;                /* pointer to the first cell of
 					     the heap, Should always be
 					     either prog_end, or
 					     upper_head. */
 				       
-static int32_t *hp;                       /* the heap pointer. */
+static word *hp;                       /* the heap pointer. */
 
-static int32_t  rr = MAKE_NUM(0);         /* the root regiseter can be
+static word  rr = MAKE_NUM(0);         /* the root regiseter can be
 					     used by the language to
 					     store an additional root for
 					     gc (anything on the stack is
@@ -117,13 +117,13 @@ static int32_t  rr = MAKE_NUM(0);         /* the root regiseter can be
    that accesses the current sp.
 */
 #define STACK_POP() *( ++sp )
-
+#define ignore(x) ({(void)x;})
 /* 
    Pushing an element on the stack.  Like popping this changes the
    stack pointer so use with care.
 */
 #define STACK_PUSH(x) do{					\
-	int32_t __tmp = x;					\
+	word __tmp = x;					\
 	if(sp == &memory[MEM_SIZE - STACK_SIZE]){		\
 	    fprintf(stderr, "Stack overflow imminent!\n");	\
 	    DO_DUMP(stderr);					\
@@ -140,7 +140,7 @@ static int32_t  rr = MAKE_NUM(0);         /* the root regiseter can be
   Function for generically printing the contents of a cell. 
   Used by the DO_DUMP macro below, and the inspector 
 */
-static inline void print_cell(FILE *stream, int32_t c){
+static inline void print_cell(FILE *stream, word c){
     switch(CELL_TYPE(c)){
       case NUM:
 	  fprintf(stream, "%"PRId32" (%"PRIx32")",
@@ -322,14 +322,14 @@ static inline void print_cell(FILE *stream, int32_t c){
    The new_heap argument is either upper_heap or prog_end, whichever
    is not currently active.
 */
-void gc(int32_t *new_heap)
+void gc(word *new_heap)
 {
-  int32_t mappings[MEM_SIZE];
-  int32_t worklist[MEM_SIZE];
-  int32_t *work = worklist;
+  word mappings[MEM_SIZE];
+  word worklist[MEM_SIZE];
+  word *work = worklist;
   int i;
-  int32_t tmp, val;
-  memset(mappings, 0xffffffff, MEM_SIZE*sizeof(int32_t));
+  word tmp, val;
+  memset(mappings, 0xffffffff, MEM_SIZE*sizeof(word));
 
   hp = new_heap;
 
@@ -519,7 +519,7 @@ void gc(int32_t *new_heap)
   }
 
 #ifdef __GC_DEBUG__
-  memset(new_heap == upper_heap ? prog_end : upper_heap, 0xabababab, heap_size*sizeof(int32_t));
+  memset(new_heap == upper_heap ? prog_end : upper_heap, 0xabababab, heap_size*sizeof(word));
   fprintf(stderr, "After gc %ld cells available (hp = %ld)\n",
 	  heap_size - (hp - heap_base), hp - memory);
 #endif
@@ -655,10 +655,10 @@ int main(int argc, char *argv[])
 
   /* stack manipulation: push, pop, swap, and rotate */
   INSTRUCTION(PUSH, STACK_PUSH(*pc++));
-  INSTRUCTION(POP, STACK_POP());
+  INSTRUCTION(POP, ignore(STACK_POP()));
   INSTRUCTION(SWAP,
 	      do{
-		int32_t tmp = STACK(0);
+		word tmp = STACK(0);
 		STACK(0) = STACK(1);
 		STACK(1) = tmp;
 	      }while(0)
@@ -666,7 +666,7 @@ int main(int argc, char *argv[])
   INSTRUCTION(DUP, STACK_PUSH(STACK(0)));
   INSTRUCTION(ROT,
 	      do{
-		int32_t tmp = STACK(0);		
+		word tmp = STACK(0);		
 		STACK(0) = STACK(1);
 		STACK(1) = STACK(2);
 		STACK(2) = tmp;
@@ -678,7 +678,7 @@ int main(int argc, char *argv[])
      off the stack, push the current pc on, then set the new pc. */
   INSTRUCTION(CALL,
 	      do{
-		int32_t tmp = pc - memory;
+		word tmp = pc - memory;
 		ASSERT_TYPE(STACK(0), PTR);
 		pc = memory + PTR_TARGET(STACK(0));
 		STACK(0) = MAKE_PTR(tmp,0);
@@ -694,7 +694,7 @@ int main(int argc, char *argv[])
 		ASSERT_TYPE(STACK(1), PTR);
 		pc = memory + PTR_TARGET(STACK(1));
 		STACK(1) =  STACK(0);
-		STACK_POP();
+		ignore(STACK_POP());
 	      }while(0)
 	      );
 
@@ -711,8 +711,8 @@ int main(int argc, char *argv[])
 		if(unlikely(!IS_BOOL(STACK(1)))){TYPE_ERROR(BOOL);}
 		pc = ((STACK(1) ==  TRUE_VAL) ?
 		      memory + PTR_TARGET(STACK(0)) : pc);
-		STACK_POP(); 
-		STACK_POP();
+		ignore(STACK_POP()); 
+		ignore(STACK_POP());
 	      }while(0)
 	      );
 
@@ -730,58 +730,58 @@ int main(int argc, char *argv[])
 	      ASSERT_TYPE(STACK(1), NUM);
 	      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) +  
 				  NUM_TO_NATIVE(STACK(0)));
-	      STACK_POP());
+	      ignore(STACK_POP()));
     
   INSTRUCTION(MUL,
 	      ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);
 	      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) * 
 				  NUM_TO_NATIVE(STACK(0))); 
-	      STACK_POP());
+	      ignore(STACK_POP()));
 
   INSTRUCTION(SUB, 
 	      ASSERT_TYPE(STACK(0), NUM);
 	      ASSERT_TYPE(STACK(1), NUM);
 	      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) -  
 				  NUM_TO_NATIVE(STACK(0)));
-	      STACK_POP());
+	      ignore(STACK_POP()));
 
   INSTRUCTION(DIV, 
 	      ASSERT_TYPE(STACK(0), NUM);
 	      ASSERT_TYPE(STACK(1), NUM);
 	      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) / 
 				  NUM_TO_NATIVE(STACK(0)));
-	      STACK_POP());
+	      ignore(STACK_POP()));
 
   INSTRUCTION(MOD, 
 	      ASSERT_TYPE(STACK(0), NUM);
 	      ASSERT_TYPE(STACK(1), NUM);
 	      STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) %  
 				  NUM_TO_NATIVE(STACK(0)));
-	      STACK_POP());
+	      ignore(STACK_POP()));
 
   /* Bitwise operations. */
   INSTRUCTION(SHL, do{
       ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);
       STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) << NUM_TO_NATIVE(STACK(0)));
-      STACK_POP();
+      ignore(STACK_POP());
     }while(0));
 
   INSTRUCTION(SHR, do{
       ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);
       STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) >> NUM_TO_NATIVE(STACK(0)));
-      STACK_POP();
+      ignore(STACK_POP());
     }while(0));
 
   INSTRUCTION(BOR, do{
       ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);
       STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) | NUM_TO_NATIVE(STACK(0)));
-      STACK_POP();
+      ignore(STACK_POP());
     }while(0));
 
   INSTRUCTION(BAND, do{
       ASSERT_TYPE(STACK(0), NUM); ASSERT_TYPE(STACK(1), NUM);
       STACK(1) = MAKE_NUM(NUM_TO_NATIVE(STACK(1)) & NUM_TO_NATIVE(STACK(0)));
-      STACK_POP();
+      ignore(STACK_POP());
     }while(0));
   
   /* Comparison */
@@ -789,7 +789,7 @@ int main(int argc, char *argv[])
      are integers. */
   INSTRUCTION(EQ, do{
       STACK(1) = (STACK(0) == STACK(1) ? TRUE_VAL : FALSE_VAL); 
-      STACK_POP();
+      ignore(STACK_POP());
     }while(0));
 
   INSTRUCTION(LT, do{
@@ -800,7 +800,7 @@ int main(int argc, char *argv[])
 	  }else{
 	      TYPE_ERROR(CHAR or NUM);
 	  }
-	  STACK_POP();
+	  ignore(STACK_POP());
       }while(0));
   
   /* Memory access */
@@ -822,8 +822,8 @@ int main(int argc, char *argv[])
       }
       memory[PTR_TARGET(STACK(1)) + NUM_TO_NATIVE(STACK(0))] = STACK(2);
       STACK(2) = STACK(1); /* leave the pointer on the top of the stack */
-      STACK_POP();
-      STACK_POP();
+      ignore(STACK_POP());
+      ignore(STACK_POP());
     }while(0)
     );
 
@@ -837,12 +837,12 @@ int main(int argc, char *argv[])
 	exit(1);
       }
       STACK(1) = memory[PTR_TARGET(STACK(1)) + NUM_TO_NATIVE(STACK(0))];
-      STACK_POP();
+      ignore(STACK_POP());
     }while(0));
 
   /* Memory Allocation */
   INSTRUCTION(ALOC, do{
-      int32_t __tmp;
+      word __tmp;
       ASSERT_TYPE(STACK(0), NUM);
       HEAP_CHECK(NUM_TO_NATIVE(STACK(0)));
       __tmp = MAKE_PTR(hp - memory, NUM_TO_NATIVE(STACK(0)));
@@ -854,7 +854,8 @@ int main(int argc, char *argv[])
   INSTRUCTION(GETC, STACK_PUSH(MAKE_CHAR(getchar())));
   INSTRUCTION(DUMP, DO_DUMP(stdout));
   INSTRUCTION(PINT, ASSERT_TYPE(STACK(0), NUM);    
-	      printf("%"PRId32, NUM_TO_NATIVE(STACK(0))); STACK_POP());
+	      printf("%"PRId32, NUM_TO_NATIVE(STACK(0))); 
+	      ignore(STACK_POP()));
   INSTRUCTION(PCHR, ASSERT_TYPE(STACK(0), VCONST); 
 	      putchar(CHAR_TO_NATIVE(STACK_POP())));
 
