@@ -1,3 +1,10 @@
+(define fold            (lambda (f s l) (if (null? l) s (fold f (f s (car l)) (cdr l)))))
+(define vector-fold     (lambda (f seed s start end)
+			  (if (>= start end) seed
+			      (vector-fold f (f (vector-ref s start) seed) 
+					   s (+ start 1) end))))
+(define string-fold     vector-fold)
+
 (define cadr            (lambda (l) (car (cdr l))))
 (define caar            (lambda (l) (car (car l))))
 (define cdar            (lambda (l) (cdr (car l))))
@@ -10,29 +17,14 @@
 (define newline		(lambda () (print-char #\newline)))
 (define list?		(lambda (l) (if (null? l) #t 
 					(if (pair? l) (list? (cdr l)) #f))))
-(define length-helper	(lambda (l n) (if (null? l) n (length-helper (cdr l) (+ 1 n)))))
-(define length		(lambda (l) (length-helper l 0)))
+(define length		(lambda (l) (fold (lambda (n x) (+ n 1)) 0 l)))
 (define not		(lambda (x) (if x #f #t)))
-(define reverse-helper	(lambda (l acc) (if (null? l) acc  (reverse-helper (cdr l) (cons (car l) acc)))))
-(define reverse		(lambda (l) (reverse-helper l nil)))
-(define revappend	(lambda (l1 l2)
-			  (if (null? l1) l2 (revappend (cdr l1) (cons (car l1) l2)))))
-(define append		(lambda (l1 l2)
-			  (revappend (reverse l1) l2)))
-(define map-helper      (lambda (f l ll) (if (null? l) (reverse ll) (map-helper f (cdr l) (cons (f (car l)) ll)))))
-(define map		(lambda (f l) (map-helper f l (quote ()))))
+(define revappend	(lambda (l1 l2) (fold (lambda (acc e) (cons e acc)) l2 l1)))
+(define reverse		(lambda (l) (revappend l '())))
+(define append		(lambda (l1 l2) (revappend (reverse l1) l2)))
+(define map		(lambda (f l)
+			  (reverse (fold (lambda (acc e) (cons (f e) acc)) '() l))))
 
-(define vector-fold     (lambda (f seed s start end)
-			  (if (>= start end) seed
-			      (vector-fold f (f (vector-ref s start) seed) 
-					   s (+ start 1) end))))
-(define string-fold     vector-fold)
-(define sublist-helper  (lambda (l start end acc)
-			  (if (or (null? l) (= end 0)) (reverse acc)
-			      (if (= start 0)
-				  (sublist-helper (cdr l) 0 (- end 1) (cons (car l) acc))
-				  (sublist-helper (cdr l) (- start 1) (- end 1) nil)))))
-(define sublist         (lambda (l start end) (sublist-helper l start end nil)))
 
 (define copy-into-string (lambda (dest dest-offset src src-offset src-end)
 			   (string-fold (lambda (c loc)
@@ -45,15 +37,15 @@
 (define substring       (lambda (s start end) 
 			  (copy-into-string (make-string (- end start)) 0 s start end)))
 
-(define display-list-body (lambda (l spaces)
+(define display-list-body (lambda (l)
 			    (if (null? l) #t
 				(begin
 				  (display (car l))
 				  (if (null? (cdr l)) #t
 				      (if (pair? (cdr l))
 					  (begin
-					    (if spaces (print-char #\space) #t)
-					    (display-list-body (cdr l) spaces))
+					    (print-char #\space)
+					    (display-list-body (cdr l)))
 					  (begin
 					    (print-char #\space)
 					    (print-char #\.)
@@ -63,7 +55,7 @@
 
 (define display-list (lambda (l)
 		       (print-char #\()
-		       (display-list-body l #t)
+		       (display-list-body l)
 		       (print-char #\))))
 
 (define display-string 
@@ -93,16 +85,11 @@
 						     (print-char #\f))
 					      #t)))))))))
 
-(define list->string-helper 
-  (lambda (s l2 n)
-    (if (null? l2) s
-	(begin
-	  (string-set! s n (car l2))
-	  (list->string-helper s (cdr l2) (+ n 1))))))
-
 (define list->string 
   (lambda (l)
-      (list->string-helper (make-string (length l)) l 0)))
+    (let ((s (make-string (length l))))
+      (fold (lambda (i c) (string-set! s i c) (+ i 1)) 0 l)
+      s)))
 
 (define vector->list
   (lambda (s) (reverse (vector-fold (lambda (c l) (cons c l)) nil s 0 (vector-length s)))))
