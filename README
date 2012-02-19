@@ -1,0 +1,45 @@
+This project implements a simple bytecode virtual machine, assembler,
+and self-hosting compiler for a scheme-like high-level langauge. It is
+intended as a vehicle for playing with ideas in bytecode interpreting
+and compilation.  It is not intended for any sort of real or
+production use.  
+
+To build the project,  simply type 
+    $ make
+
+You will need gcc installed as well as GNU guile, a scheme
+implementation used to bootstrap the compiler.  
+
+This will build the following products:
+
+    interpreter:       the standard bytecode interpreter.
+
+    trace_interpreter: a version of the bytecode interpreter that
+   		       prints a log describing the machine state as
+     		       each instruction is executed
+
+    assembler:         the assembler for building executable bytecode
+    		       files from bytecode assembly files.
+ 
+    schemer.bytecode:  the scheme-like language compiler, built from
+    		       its own image, that can be run using the
+    		       interpreter.
+    
+A bytecode program can be run using either the regular or tracing
+interpreter as:
+    $ ./[trace-]interpreter program.bytecode
+
+To use the compiler, a source program should be directed into the
+interpreter's standard input, the bytecode assembly will be written to
+standard output:
+
+    $ ./interpreter schemer.bytecode < program.sch > program.asm
+
+To assemble the compiled program into executable bytecode, send it as
+input to the assembler command:
+
+    $ ./assembler <program.asm >program.bytecode
+
+Note: The interpreter does not provide any standard-error like output
+stream, so the compiler will write its error messages to standard-out
+which will confuse the assembler and lead to bizarre error messages.
