@@ -164,7 +164,6 @@
 	   ("char?"	         "char_q")
 	   ("pair?"	         "pair_q")
 	   ("read-char"		 "read_char")
-	   ("list"		 "list")
 	   ("quit"		 "quit")
 	   ("set-car!"	         "set_car")
 	   ("set-cdr!"	         "set_cdr") 
@@ -601,6 +600,59 @@
 				(compile-symbol x env)
 				(compile-reference x env))))))))))
 
+(define list-part
+  (lambda (l)
+    (letrec ((helper (lambda (l acc)
+		       (if (pair? l)
+			   (helper (cdr l) (cons (car l) acc))
+			   (reverse acc)))))
+      (helper l '()))))
+
+(define process-params
+  (lambda (plist)
+    (if (list? plist) 
+	(begin ;; (display "plist is list")
+	       ;; (newline)
+	       plist)
+	(let ((fixed-params    (list-part plist))
+	      (variadic-param  (if (pair? plist) (cdr (last plist)) plist)))
+	  (let ((nr-fixed-params (length fixed-params))
+		(loop            (fresh-label))
+		(out             (fresh-label)))
+	    ;; (display "variadic plist")
+	    (assembly-nil)                               ;; (nil)
+	    (assembly-nrargs)                            ;; (nil nr-args)
+	    (append-instructions 
+	     (list (asm-label-definition loop)
+		   "DUP"                                 ;; (l i i)
+		   "PUSH" (asm-number nr-fixed-params)   ;; (l i nr-fixed-params)
+		   "SUB"                                 ;; (l i (- i nr-fixed-params))
+		   "PUSH" (asm-number 0)                 ;; (l i (- i nr-fixed-params) 0)
+		   "EQ"                                  ;; (l i (= (- i nr-fixed-params) 0))
+		   "PUSH" (asm-label-reference out)      ;; (l i (= (- i nr-fixed-params) 0) out)
+		   "JTRUE"                               ;; (l i)
+		   "PUSH" (asm-number 1)                 ;; (l i 1)
+		   "SUB"                                 ;; (l (- i 1))
+		   "DUP"                                 ;; (l (- i 1) (- i 1))
+		   "ROT"                                 ;; ((- i 1) i (- i 1))
+		   "RDRR"))                              ;; ((- i 1) i (- i 1) env)
+	    (u-call-car)                                 ;; ((- i 1) i (- i 1) (car env))
+	    (append-instructions 
+	     (list "SWAP"                                ;; ((- i 1) l (car env) (- i 1))
+		   "PUSH" vector-elems-offset            ;; ((- i 1) l (car env) (- i 1) vector-elems-offset)
+		   "ADD"                                 ;; ((- i 1) l (car env) (+ (- i 1) vector-elems-offset))
+		   "LOAD"
+		   "SWAP"))                              ;; ((- i 1) l (aref (car env) (- i 1)))
+	    (u-call-cons)                                ;; ((- i 1) (cons (aref (car env) (- i 1)) l))
+	    (append-instructions
+	     (list "SWAP"                                ;; ((cons (aref (car env) (- i 1)) l) (- i 1))
+		   "PUSH" (asm-label-reference loop)     ;; ((cons (aref (car env) (- i 1)) l) (- i 1) loop)
+		   "JMP"))
+	    (append-instructions 
+	     (list (asm-label-definition out)            ;; (l i)
+		   "POP"))                               ;; (l)
+	    (assembly-set-arg nr-fixed-params)
+	    (append fixed-params (list variadic-param)))))))
 
 ; Hm, we should probably be flagging code pointers with something
 ; so that we can avoid gc'ing them. Right now the VM just assumes the 
@@ -614,9 +666,14 @@
       (u-call-cons)
       (lambda ()	
 	(append-instruction (asm-label-definition label))
-	(let ((r (compile-sequence (cdr (cdr l)) (cons (car (cdr l)) env) #f) ))
-	  (assembly-funret) 
-	  r)))))
+	(let ((param-list (car (cdr l)))
+	      (body       (cdr (cdr l))))
+	  (let ((r (compile-sequence body 
+				     (cons 
+				      (process-params param-list)
+				      env) #f)))
+	    (assembly-funret)
+	    r))))))
 
 (define compile-let-bindings
   (lambda (bs env)
@@ -1026,14 +1083,6 @@
 	     "PUSH" true-value))
       (assembly-funret))
     
-    (begin
-      (assembly-builtin-header "list")
-      (assembly-env-vec 0)
-      (assembly-make-args 1)
-      (let ((vector->list (lookup-reference "vector->list" top-level-env)))
-	(assembly-env-val 1 0 (cdr vector->list)))
-      (assembly-tailcall))
-   
 	; getting the length of a string is easy
     (begin
       (assembly-builtin-header "vector_length")
@@ -1197,7 +1246,9 @@
 				      (if (char=? c #\() #t
 					  (if (char=? c #\)) #t
 					      (if (char=? c #\") #t
-						  (if (char=? c #\; ) #t #f)))))))
+						  (if (char=? c #\; ) #t 
+						      (if (char=? c #\.) #t
+							  #f))))))))
 (define char-is-digit?(lambda (c) (if (char>=? c #\0) (char<=? c #\9) #f)))
 (define is-char-name? (lambda (s) (if (string=? s "newline") #t 
 				      (if (string=? s "space") #t
@@ -1222,8 +1273,10 @@
 			    (cons "#\\\"" (read-char))
 			    (if (char=? c #\;)
 				(cons "#\\;" (read-char))
-				(let ((r (reader-state-wordchar c)))
-				  (cons (string-append "#\\" (car r)) (cdr r))))))))))))
+				(if (char=? c #\.)
+				    (cons "#\\." (read-char))
+				    (let ((r (reader-state-wordchar c)))
+				      (cons (string-append "#\\" (car r)) (cdr r)))))))))))))
 
 (define reader-state-hash
   (lambda (c)
@@ -1298,9 +1351,11 @@
 			    (cons ")" (read-char))				   
 			    (if (char=? c #\')
 				(cons "'" (read-char))
-				(if (char=? c #\;)
-				    (reader-state-semicolon (read-char))			     
-				    (reader-state-wordchar c)))))))))))
+				(if (char=? c #\.)
+				    (cons "." (read-char))
+				    (if (char=? c #\;)
+					(reader-state-semicolon (read-char))					
+					(reader-state-wordchar c))))))))))))
 
 (define look-ahead #f)
 (define next-token
@@ -1323,6 +1378,22 @@
 		(cons "quote" (cons (read-sexp) '()))
 		tok)) #f)))
 
+(define read-dotted-cdr
+  (lambda ()
+    (let ((tok    (next-token))
+	  (cparen (next-token)))
+      (if (if tok (not cparen) #f)
+	  (begin
+	    (display "ERRROR: EOF Encountered while reading list\n")
+	    (quit))
+	  (if (not (string=? cparen ")"))
+	      (begin
+		(display "ERROR: Expected ) in dotted cdr. Got: ")
+		(display cparen)
+		(newline)
+		(quit))
+	      (parse-token tok))))))
+
 (define read-list 
   (lambda ()
     (let ((x (next-token)))
@@ -1330,7 +1401,10 @@
 	(begin
 	  (display "ERRROR: EOF Encountered while reading list\n")
 	  (quit))  
-	(if (string=? x ")") '() (cons (parse-token x) (read-list)))))))
+	(if (string=? x ")") '() 
+	    (if (string=? x ".")
+		(read-dotted-cdr)
+		(cons (parse-token x) (read-list))))))))
 
 
 (define read-sexp

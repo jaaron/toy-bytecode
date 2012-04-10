@@ -15,6 +15,7 @@
 ;; You should have received a copy of the GNU General Public License
 ;; along with toy-bytecode.  If not, see <http://www.gnu.org/licenses/>.
 
+(define list            (lambda l l))
 (define fold            (lambda (f s l) (if (null? l) s (fold f (f s (car l)) (cdr l)))))
 (define vector-fold     (lambda (f seed s start end)
 			  (if (>= start end) seed
