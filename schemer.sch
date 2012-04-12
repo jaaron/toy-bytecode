@@ -487,10 +487,19 @@
 		     ins-load)))))))
 
 (define assembly-set-env-val
-  (lambda (depth idx)
-    (assembly-env-vec depth)
-    (append-instructions
-     (list ins-push (asm-number (+ raw-vector-elems-offset idx)) ins-stor))))
+  (lambda (env-length depth idx)
+    (if (= env-length (+ depth 1))
+	(begin 
+	  (append-instructions
+	   (list ins-push (asm-label-reference initial-env-label)))
+	  (u-call-car)
+	  (append-instructions 
+	   (list ins-push (asm-number (+ raw-vector-elems-offset idx))
+		 ins-stor)))
+	(begin
+	  (assembly-env-vec depth)
+	  (append-instructions
+	   (list ins-push (asm-number (+ raw-vector-elems-offset idx)) ins-stor))))))
 
 (define assembly-nil      
   (lambda ()
@@ -712,7 +721,7 @@
   (lambda (l env rest)
     (let ((cell-id (lookup-reference (cadr l) env)))
       (let ((r (compile-sexp (caddr l) env #t)))
-	(assembly-set-env-val (car cell-id) (cdr cell-id))
+	(assembly-set-env-val (length env) (car cell-id) (cdr cell-id))
 	r))))
 
 (define compile-letrec
@@ -766,9 +775,9 @@
       (if v
 	  (begin
 	    (append-instruction (string-append ";; Updating binding " (car (cdr l))))
-	    (assembly-set-env-val (car v) (cdr v)))
+	    (assembly-set-env-val (length env) (car v) (cdr v)))
 	  (begin
-	    (assembly-set-env-val (- (length env) 1) (length (car top-level-env)))
+	    (assembly-set-env-val (length env) (- (length env) 1) (length (car top-level-env)))
 	    (set-cdr! top-level-env-endptr
 		      (cons (list (car (cdr l)) "__nil")
 			    (cdr top-level-env-endptr)))
