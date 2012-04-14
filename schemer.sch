@@ -143,8 +143,7 @@
     ))
 
 ; search the list of builtin forms for a 
-; particular form
-   
+; particular form   
 (define find-special
     (lambda (f) 
       (letrec ((helper (lambda (ss)
@@ -230,9 +229,9 @@
 (define append-named-consbox
   (lambda (name car-value cdr-value)
     (append-instructions 
-     (list (asm-label-definition-sz name consbox-size)
-	   car-value
-	   cdr-value)) 
+     (asm-label-definition-sz name consbox-size)
+     car-value
+     cdr-value)
     name))
 
 (define append-consbox 
@@ -243,11 +242,10 @@
   (lambda (vec-list)
     (let ((lbl (fresh-label)))
       (append-instructions
-       (list
 	(asm-label-definition-sz lbl (+ (length vec-list) raw-vector-elems-offset))
 	vector-type-flag
-	(asm-number (length vec-list))))
-      (append-instructions vec-list)
+	(asm-number (length vec-list)))
+      (apply append-instructions vec-list)
       lbl)))
 
 (define append-initial-env
@@ -278,11 +276,13 @@
   
 ; append a list of instructions to the output stream
 (define append-instructions 
-  (lambda (inss)
-    (if (null? inss) (quote ())
-	(begin
-	  (append-instruction (car inss))
-	  (append-instructions (cdr inss))))))
+  (lambda inss
+    (letrec ((helper (lambda (inss)
+		       (if (null? inss) (quote ())
+			   (begin
+			     (append-instruction (car inss))
+			     (helper (cdr inss)))))))
+      (helper inss))))
 
 
 ;
@@ -319,29 +319,29 @@
 			   
 ; assembly for the primitive list functions car, cdr, and cons
 ; (ptr) -> ((car ptr))
-(define assembly-car  (lambda () (append-instructions (list ins-push consbox-car-offset ins-load))))
+(define assembly-car  (lambda () (append-instructions ins-push consbox-car-offset ins-load)))
 
 ; (ptr) -> ((cdr ptr))
-(define assembly-cdr  (lambda () (append-instructions (list ins-push consbox-cdr-offset ins-load))))
+(define assembly-cdr  (lambda () (append-instructions  ins-push consbox-cdr-offset ins-load)))
 
 
 ; (cdr car) -> ((cons car cdr))
 (define assembly-cons (lambda ()
 			(append-instructions 
-			 (list ins-push asm-consbox-size		; (car cdr 2)
-			       ins-aloc				; (car cdr hp)
-			       ins-push consbox-cdr-offset	; (car cdr hp 1)
-			       ins-stor				; (car hp) cdr stored
-			       ins-push consbox-car-offset	; (car hp 0)
-			       ins-stor))				; (hp)  cdr stored
+			 ins-push asm-consbox-size	; (car cdr 2)
+			 ins-aloc			; (car cdr hp)
+			 ins-push consbox-cdr-offset	; (car cdr hp 1)
+			 ins-stor			; (car hp) cdr stored
+			 ins-push consbox-car-offset	; (car hp 0)
+			 ins-stor)			; (hp)  cdr stored
 			))
 
 
 ; top is the cons box to set, then the new value
 (define assembly-set-car 
-  (lambda () (append-instructions (list ins-push consbox-car-offset ins-stor))))
+  (lambda () (append-instructions ins-push consbox-car-offset ins-stor)))
 (define assembly-set-cdr 
-  (lambda () (append-instructions (list ins-push consbox-cdr-offset ins-stor))))
+  (lambda () (append-instructions ins-push consbox-cdr-offset ins-stor)))
 
 ; these define how to call the three primitives car, cdr, and cons as
 ; part of larger compiler generated sequences (e.g., function application)
@@ -353,15 +353,14 @@
 (define u-call-cdr  (lambda () (assembly-cdr))) ; same with cdr.
 
 (define u-call-cons ; cons is really big (13 instructions)! we'll never inline it
-  (lambda () (append-instructions (list ins-push (asm-label-reference "__u_cons") ins-call))))
+  (lambda () (append-instructions ins-push (asm-label-reference "__u_cons") ins-call)))
 
 (define u-call-set-car (lambda () (assembly-set-car)))
 (define u-call-set-cdr (lambda () (assembly-set-cdr)))
 
 (define u-call-make-vector (lambda () (append-instructions 
-				       (list
 					ins-push (asm-label-reference "__u_make_vector_nofill")
-					ins-call))))
+					ins-call)))
 
 ; function application convention
 ; top of stack is the closure to apply, then the arguments
@@ -375,13 +374,13 @@
 				    (if (= nr-args 0) #f
 					(begin 
 					  (append-instructions 
-					   (list ins-push (asm-number (+ (+ raw-vector-elems-offset nr-args) -1))
-						 ins-stor))
+					   ins-push (asm-number (+ (+ raw-vector-elems-offset nr-args) -1))
+					   ins-stor)
 					  (assembly-make-args-helper (- nr-args 1))))))
 
 (define assembly-make-args (lambda (nr-args)
 			     (append-instructions
-			      (list ins-push  (asm-number nr-args)))
+			      ins-push  (asm-number nr-args))
 			     (u-call-make-vector)
 			     (assembly-make-args-helper nr-args)))
 
@@ -391,45 +390,45 @@
     (append-instruction ins-rdrr)
     (u-call-car)
     (append-instructions
-     (list ins-push (asm-number (+ raw-vector-elems-offset idx))
-	   ins-load))))
+     ins-push (asm-number (+ raw-vector-elems-offset idx))
+     ins-load)))
 
 (define assembly-set-arg
   (lambda (idx)
     (append-instruction ins-rdrr)
     (u-call-car)
     (append-instructions 
-     (list ins-push (asm-number (+ raw-vector-elems-offset idx))
-	   ins-stor
-	   ins-pop))))
+     ins-push (asm-number (+ raw-vector-elems-offset idx))
+     ins-stor
+     ins-pop)))
 
 (define assembly-nrargs
   (lambda ()
     (append-instruction ins-rdrr)
     (u-call-car)
     (append-instructions 
-     (list ins-push vector-length-offset
-	   ins-load))))
+     ins-push vector-length-offset
+     ins-load)))
 
 ; (args clos) -> ((clos args)) 
 (define assembly-funcall (lambda ()
-			   (append-instruction ins-dup)    ; (args clos clos)
-			    (u-call-car)                   ; (args clos env)
+			   (append-instruction ins-dup) ; (args clos clos)
+			    (u-call-car)                ; (args clos env)
 			    (append-instructions 
-			     (list ins-swap                  ; (args env clos)
-				   ins-rot))                 ; (clos args env)
-			    (u-call-cons)	           ; (clos (args . env)*)
+			     ins-swap			; (args env clos)
+			     ins-rot)			; (clos args env)
+			    (u-call-cons)	        ; (clos (args . env)*)
 			    (append-instructions
-			     (list ins-rdrr                  ; stack is (clos (args . env) renv)
-				   ins-swap                  ; stack is (clos renv (args . env) )
-				   ins-wtrr                  ; stack is (clos renv) rr = (args . env)
-				   ins-swap))                ; stack is (renv clos) 
-			    (u-call-cdr)                   ; stack is (renv clos-code)
+			     ins-rdrr			; stack is (clos (args . env) renv)
+			     ins-swap			; stack is (clos renv (args . env) )
+			     ins-wtrr			; stack is (clos renv) rr = (args . env)
+			     ins-swap)			; stack is (renv clos) 
+			    (u-call-cdr)                ; stack is (renv clos-code)
 			    (append-instructions
-			     (list ins-call                  ; make the call.  we'll have (renv rval)
-				   ins-swap                  ; stack is (rval renv)
-				   ins-wtrr                  ; stack is (rval) rr = renv
-				   ))))
+			     ins-call			; make the call.  we'll have (renv rval)
+			     ins-swap			; stack is (rval renv)
+			     ins-wtrr			; stack is (rval) rr = renv
+			     )))
 
 ; tail calls are sneakier we avoid saving the current
 ; env pointer. 
@@ -438,8 +437,8 @@
 			    (append-instruction ins-dup)	; (renv rp args clos clos)
 			    (u-call-car)			; (renv rp args clos env)			    
 			    (append-instructions
-			     (list ins-swap			; (renv rp args env clos)
-				   ins-rot))			; (renv rp clos args env)
+			     ins-swap			; (renv rp args env clos)
+			     ins-rot)			; (renv rp clos args env)
 			    (u-call-cons)			; (renv rp clos (args . env)* )
 			    (append-instruction ins-wtrr)	; (renv rp clos) rr = (args . env)
 								; note that we didn't store the current env
@@ -463,10 +462,10 @@
 (define assembly-env-vec
   (lambda (depth)
     (append-instructions 
-     (list ins-rdrr					; (env)
-	   ins-push (asm-number depth)			; (env d)
-	   ins-push (asm-label-reference "__u_nth_cell")  ; (env d u_nth)
-	   ins-call))
+     ins-rdrr						; (env)
+     ins-push (asm-number depth)			; (env d)
+     ins-push (asm-label-reference "__u_nth_cell")	; (env d u_nth)
+     ins-call)
     (u-call-car)))
 
 (define assembly-env-val
@@ -474,37 +473,37 @@
     (if (= env-length (+ depth 1))  ;; getting something from top-level-env
 	(begin
 	  (append-instructions 
-	   (list ins-push (asm-label-reference initial-env-label)))
+	   ins-push (asm-label-reference initial-env-label))
 	  (u-call-car)
 	  (append-instructions 
-	   (list ins-push (asm-number (+ raw-vector-elems-offset idx))
-		 ins-load)))
+	   ins-push (asm-number (+ raw-vector-elems-offset idx))
+	   ins-load))
 	(if (= depth 0) 
 	    (assembly-get-arg idx)
 	    (begin
 	      (assembly-env-vec depth)
 	      (append-instructions
-	       (list ins-push (asm-number (+ raw-vector-elems-offset idx))
-		     ins-load)))))))
+	       ins-push (asm-number (+ raw-vector-elems-offset idx))
+	       ins-load))))))
 
 (define assembly-set-env-val
   (lambda (env-length depth idx)
     (if (= env-length (+ depth 1))
 	(begin 
 	  (append-instructions
-	   (list ins-push (asm-label-reference initial-env-label)))
+	   ins-push (asm-label-reference initial-env-label))
 	  (u-call-car)
 	  (append-instructions 
-	   (list ins-push (asm-number (+ raw-vector-elems-offset idx))
-		 ins-stor)))
+	   ins-push (asm-number (+ raw-vector-elems-offset idx))
+	   ins-stor))
 	(begin
 	  (assembly-env-vec depth)
 	  (append-instructions
-	   (list ins-push (asm-number (+ raw-vector-elems-offset idx)) ins-stor))))))
+	   ins-push (asm-number (+ raw-vector-elems-offset idx)) ins-stor)))))
 
 (define assembly-nil      
   (lambda ()
-    (append-instructions (list ins-push (asm-label-reference "__nil") ))))
+    (append-instructions  ins-push (asm-label-reference "__nil") )))
 
 ; Lookup functions,  find a particular symbol in the symbolic environment
 ; list. These are complimentary to the assembly-env-* functions above.
@@ -544,7 +543,7 @@
 ; Compilation functions
 
 (define compile-number 
-  (lambda (c env) (append-instructions (list ins-push (asm-number c))) #f))
+  (lambda (c env) (append-instructions ins-push (asm-number c)) #f))
 
 
 (define calculate-string-list-length
@@ -562,13 +561,13 @@
  (lambda (s env) 
    (let ((strlabel (fresh-label))
 	 (strlen (calculate-string-length s)))
-     (append-instructions (list ins-push (asm-label-reference strlabel)))
+     (append-instructions ins-push (asm-label-reference strlabel))
      (lambda ()         
        (append-instructions 
-	(list (asm-label-definition-sz strlabel (+ strlen 2))
-	      string-type-flag
-	      (asm-number strlen)
-	      s))
+	(asm-label-definition-sz strlabel (+ strlen 2))
+	string-type-flag
+	(asm-number strlen)
+	s)
        #f))))
 
 (define calculate-symbol-length 
@@ -578,35 +577,35 @@
   (lambda (s env)
     (let ((symlabel (fresh-label))
 	  (symlen (calculate-symbol-length s)))
-      (append-instructions (list ins-push (asm-label-reference symlabel)))
+      (append-instructions ins-push (asm-label-reference symlabel))
       (lambda ()
 	(append-instructions 
-	 (list (asm-label-definition-sz symlabel (+ symlen 2))
-	       symbol-type-flag
-	       (asm-number symlen)
-	       (string-append "\"" (string-append s "\""))))
+	 (asm-label-definition-sz symlabel (+ symlen 2))
+	 symbol-type-flag
+	 (asm-number symlen)
+	 (string-append "\"" (string-append s "\"")))
 	#f))))
 
 ; this doesn't handle escaped chars except newline, tab, quote, double quote and backslash
 (define compile-char
   (lambda (s env)
     (append-instructions 
-     (list ins-push 	   
-	   (string-append "'" 
-			  (string-append
-			   (if (string=? s "#\\tab") 
-			       "\\t"
-			       (if (string=? s "#\\newline")
-				   "\\n" 
-				   (if (string=? s "#\\\\")
-				       "\\\\"
-				       (if (string=? s "#\\'")
-					   "\\'"
-					   (if (string=? s "#\\\"") "\\\""
-					       (if (string=? s "#\\space")
-						   " "
-						   (substring s 2 3))))))) 
-			   "'")))) #f))
+     ins-push 	   
+     (string-append "'" 
+		    (string-append
+		     (if (string=? s "#\\tab") 
+			 "\\t"
+			 (if (string=? s "#\\newline")
+			     "\\n" 
+			     (if (string=? s "#\\\\")
+				 "\\\\"
+				 (if (string=? s "#\\'")
+				     "\\'"
+				     (if (string=? s "#\\\"") "\\\""
+					 (if (string=? s "#\\space")
+					     " "
+					     (substring s 2 3))))))) 
+		     "'"))) #f))
 
 (define compile-reference 
   (lambda (r env)
@@ -629,9 +628,9 @@
 (define compile-atom 
   (lambda (x env quoted) 
     (if (string=? x "#t")
-	(begin (append-instructions (list ins-push true-value)) #f)
+	(begin (append-instructions ins-push true-value) #f)
 	(if (string=? x "#f")
-	    (begin (append-instructions (list ins-push false-value)) #f)
+	    (begin (append-instructions ins-push false-value) #f)
 	    (if (string-is-numeric? x)
 		(compile-number x env) 
 		(if (char=? (car (string->list x)) #\")
@@ -662,11 +661,11 @@
 	      (variadic-param  (if (pair? plist) (cdr (last plist)) plist)))
 	  (let ((nr-fixed-params (length fixed-params)))
 		(append-instructions
-		 (list ins-push (asm-number nr-fixed-params)
-		       ins-push (asm-label-reference "__u_make_varargs_list")
-		       ins-call
-		       ins-pop))
-	    (append fixed-params (list variadic-param)))))))
+		 ins-push (asm-number nr-fixed-params)
+		 ins-push (asm-label-reference "__u_make_varargs_list")
+		 ins-call
+		 ins-pop)
+		(append fixed-params (list variadic-param)))))))
 
 ; Hm, we should probably be flagging code pointers with something
 ; so that we can avoid gc'ing them. Right now the VM just assumes the 
@@ -676,7 +675,7 @@
   (lambda (l env rest)
     (let ((label (fresh-label)))
       (append-instructions
-       (list ins-rdrr ins-push (asm-label-reference label) ))
+       ins-rdrr ins-push (asm-label-reference label) )
       (u-call-cons)
       (lambda ()	
 	(append-instruction (asm-label-definition label))
@@ -703,7 +702,7 @@
     (let ((r1 (compile-let-bindings (car (cdr l)) env))
 	  (e (map (lambda (x) (car x)) (car (cdr l)))))
       (assembly-make-args (length (cadr l)))
-      (append-instructions (list ins-rdrr))
+      (append-instruction ins-rdrr)
       (u-call-cons)
       (append-instruction ins-wtrr)
       (let ((r2 (compile-sequence (cdr (cdr l)) (cons e env) rest)))
@@ -803,13 +802,13 @@
 	      (false-case (car (cdr (cdr (cdr l))))))
 	  (let ((r1 (compile-sexp conditional env #t))
 		(x  (append-instructions 
-		     (list ins-push false-value
-			   ins-eq
-			   ins-push (asm-label-reference false-label)
-			   ins-jtrue)))
+		     ins-push false-value
+		     ins-eq
+		     ins-push (asm-label-reference false-label)
+		     ins-jtrue))
 		(r2 (compile-sexp true-case env rest))
-		(y  (append-instructions (list ins-push (asm-label-reference join-label) ins-jmp
-					       (asm-label-definition false-label))))
+		(y  (append-instructions ins-push (asm-label-reference join-label) ins-jmp
+					 (asm-label-definition false-label)))
 		(r3 (compile-sexp false-case env rest)))
 	    (append-instruction (asm-label-definition join-label))
 	    (lambda ()
@@ -886,87 +885,86 @@
     (begin
       (let ((loop            (fresh-label))
 	    (out             (fresh-label)))
-							;; (display "variadic plist")
+						;; (display "variadic plist")
 	(append-instructions 
-	 (list (asm-label-definition "__u_make_varargs_list")
-	       ins-swap))                               ;; (rp nr-fixed-params)
-	(assembly-nil)					;; (rp nr-fixed-params nil)
-	(assembly-nrargs)				;; (rp nr-fixed-params nil nr-args)
+	 (asm-label-definition "__u_make_varargs_list")
+	 ins-swap)                              ;; (rp nr-fixed-params)
+	(assembly-nil)				;; (rp nr-fixed-params nil)
+	(assembly-nrargs)			;; (rp nr-fixed-params nil nr-args)
 	(append-instructions 
-	 (list (asm-label-definition loop)		;; (rp nr-fixed-params l i)
-	       ins-rot					;; (rp i nr-fixed-params l)
-	       ins-rot					;; (rp l i nr-fixed-params)
-	       ins-dup					;; (rp l i nr-fixed-params nr-fixed-params)
-	       ins-rot					;; (rp l nr-fixed-params i nr-fixed-params)
-	       ins-swap					;; (rp l nr-fixed-params nr-fixed-params i)
-	       ins-dup					;; (rp l nr-fixed-params nr-fixed-params i i)
-	       ins-rot					;; (rp l nr-fixed-params i i nr-fixed-params)
-	       ins-sub					;; (rp l nr-fixed-params i (- i nr-fixed-params))
-	       ins-push (asm-number 0)			;; (rp l nr-fixed-params i (- i nr-fixed-params) 0)
-	       ins-eq					;; (rp l nr-fixed-params i (= (- i nr-fixed-params) 0))
-	       ins-push (asm-label-reference out)	;; (rp l nr-fixed-params i (= (- i nr-fixed-params) 0) out)
-	       ins-jtrue				;; (rp l nr-fixed-params i)
-	       ins-rot					;; (rp i l nr-fixed-params)
-	       ins-rot					;; (rp nr-fixed-params i l)
-	       ins-swap					;; (rp nr-fixed-params l i)
-	       ins-push (asm-number 1)			;; (rp nr-fixed-params l i 1)
-	       ins-sub					;; (rp nr-fixed-params l (- i 1))
-	       ins-dup					;; (rp nr-fixed-params l (- i 1) (- i 1))
-	       ins-rot					;; (rp nr-fixed-params (- i 1) i (- i 1))
-	       ins-rdrr))				;; (rp nr-fixed-params (- i 1) i (- i 1) env)
-	(u-call-car)					;; (rp nr-fixed-params (- i 1) i (- i 1) (car env))
+	 (asm-label-definition loop)		;; (rp nr-fixed-params l i)
+	 ins-rot				;; (rp i nr-fixed-params l)
+	 ins-rot				;; (rp l i nr-fixed-params)
+	 ins-dup				;; (rp l i nr-fixed-params nr-fixed-params)
+	 ins-rot				;; (rp l nr-fixed-params i nr-fixed-params)
+	 ins-swap				;; (rp l nr-fixed-params nr-fixed-params i)
+	 ins-dup				;; (rp l nr-fixed-params nr-fixed-params i i)
+	 ins-rot				;; (rp l nr-fixed-params i i nr-fixed-params)
+	 ins-sub				;; (rp l nr-fixed-params i (- i nr-fixed-params))
+	 ins-push (asm-number 0)		;; (rp l nr-fixed-params i (- i nr-fixed-params) 0)
+	 ins-eq					;; (rp l nr-fixed-params i (= (- i nr-fixed-params) 0))
+	 ins-push (asm-label-reference out)	;; (rp l nr-fixed-params i (= (- i nr-fixed-params) 0) out)
+	 ins-jtrue				;; (rp l nr-fixed-params i)
+	 ins-rot				;; (rp i l nr-fixed-params)
+	 ins-rot				;; (rp nr-fixed-params i l)
+	 ins-swap				;; (rp nr-fixed-params l i)
+	 ins-push (asm-number 1)		;; (rp nr-fixed-params l i 1)
+	 ins-sub				;; (rp nr-fixed-params l (- i 1))
+	 ins-dup				;; (rp nr-fixed-params l (- i 1) (- i 1))
+	 ins-rot				;; (rp nr-fixed-params (- i 1) i (- i 1))
+	 ins-rdrr)				;; (rp nr-fixed-params (- i 1) i (- i 1) env)
+	(u-call-car)				;; (rp nr-fixed-params (- i 1) i (- i 1) (car env))
 	(append-instructions 
-	 (list ins-swap					;; (rp nr-fixed-params (- i 1) l (car env) (- i 1))
-	       ins-push vector-elems-offset		;; (rp nr-fixed-params (- i 1) l (car env) (- i 1) vector-elems-offset)
-	       ins-add					;; (rp nr-fixed-params (- i 1) l (car env) (+ (- i 1) vector-elems-offset))
-	       ins-load					;; (rp nr-fixed-params (- i 1) l (aref (car env) (- i 1)))
-	       ins-swap))				;; (rp nr-fixed-params (- i 1) (aref (car env) (- i 1)) l)
-	(u-call-cons)					;; (rp nr-fixed-params (- i 1) (cons (aref (car env) (- i 1)) l))
+	 ins-swap				;; (rp nr-fixed-params (- i 1) l (car env) (- i 1))
+	 ins-push vector-elems-offset		;; (rp nr-fixed-params (- i 1) l (car env) (- i 1) vector-elems-offset)
+	 ins-add				;; (rp nr-fixed-params (- i 1) l (car env) (+ (- i 1) vector-elems-offset))
+	 ins-load				;; (rp nr-fixed-params (- i 1) l (aref (car env) (- i 1)))
+	 ins-swap)				;; (rp nr-fixed-params (- i 1) (aref (car env) (- i 1)) l)
+	(u-call-cons)				;; (rp nr-fixed-params (- i 1) (cons (aref (car env) (- i 1)) l))
 	(append-instructions
-	 (list ins-swap					;; (rp nr-fixed-params (cons (aref (car env) (- i 1)) l) (- i 1))
-	       ins-push (asm-label-reference loop)	;; (rp nr-fixed-params (cons (aref (car env) (- i 1)) l) (- i 1) loop)
-	       ins-jmp))
-	(append-instructions 
-	 (list (asm-label-definition out)		;; (rp l nr-fixed-params i)
-	       ins-pop					;; (rp l nr-fixed-params)
-	       ins-rdrr))				;; (rp l nr-fixed-params env)
-	(u-call-car)					;; (rp l nr-fixed-params (car env)))
+	 ins-swap				;; (rp nr-fixed-params (cons (aref (car env) (- i 1)) l) (- i 1))
+	 ins-push (asm-label-reference loop)	;; (rp nr-fixed-params (cons (aref (car env) (- i 1)) l) (- i 1) loop)
+	 ins-jmp
+	 (asm-label-definition out)		;; (rp l nr-fixed-params i)
+	 ins-pop				;; (rp l nr-fixed-params)
+	 ins-rdrr)				;; (rp l nr-fixed-params env)
+	(u-call-car)				;; (rp l nr-fixed-params (car env)))
 	(append-instructions
-	 (list ins-swap					;; (rp l (car env) nr-fixed-params)
-	       ins-push vector-elems-offset		;; (rp l (car env) nr-fixed-params vector-elems-offset)
-	       ins-add					;; (rp l (car env) (+ nr-fixed-params vector-elems-offset))
-	       ins-stor					;; (rp (car env))
-	       ins-ret))))				;; ((car env))
-	(begin
-	  (append-instructions
-	   (list (asm-label-definition "__u_nth_cell")			; (l n r)
-		 ins-rot						; (r l n)
-		 (asm-label-definition "__u_nth_cell_loop")
-		 ins-dup						; (r l n n)
-		 ins-push (asm-number 0)				; (r l n n 0)
-		 ins-eq							; (r l n (= n 0))
-		 ins-push (asm-label-reference "__u_nth_cell_done")	; (r l n (= n 0) u_nth_cell_done)
-		 ins-jtrue						; (r l n)
-		 ins-push (asm-number -1)				; (r l n -1)
-		 ins-add						; (r l (- n 1))
-		 ins-swap))						; (r (- n 1) l)
-	  (u-call-cdr)							; (r (- n 1) (cdr l))
-	  (append-instructions 
-	   (list ins-swap						; (r (cdr l) (- n 1))
-		 ins-push (asm-label-reference "__u_nth_cell_loop")	; (r (cdr l) (- n 1) u_nth_cell_loop)
-		 ins-jmp
-		 (asm-label-definition "__u_nth_cell_done")		; (r l 0)
-		 ins-pop))						; (r l)
-	  (append-instruction ins-ret))
+	 ins-swap				;; (rp l (car env) nr-fixed-params)
+	 ins-push vector-elems-offset		;; (rp l (car env) nr-fixed-params vector-elems-offset)
+	 ins-add				;; (rp l (car env) (+ nr-fixed-params vector-elems-offset))
+	 ins-stor				;; (rp (car env))
+	 ins-ret)))				;; ((car env))
+
+    (begin
+      (append-instructions
+       (asm-label-definition "__u_nth_cell")			; (l n r)
+       ins-rot							; (r l n)
+       (asm-label-definition "__u_nth_cell_loop")
+       ins-dup							; (r l n n)
+       ins-push (asm-number 0)					; (r l n n 0)
+       ins-eq							; (r l n (= n 0))
+       ins-push (asm-label-reference "__u_nth_cell_done")	; (r l n (= n 0) u_nth_cell_done)
+       ins-jtrue						; (r l n)
+       ins-push (asm-number -1)					; (r l n -1)
+       ins-add							; (r l (- n 1))
+       ins-swap)						; (r (- n 1) l)
+      (u-call-cdr)						; (r (- n 1) (cdr l))
+      (append-instructions 
+       ins-swap							; (r (cdr l) (- n 1))
+       ins-push (asm-label-reference "__u_nth_cell_loop")	; (r (cdr l) (- n 1) u_nth_cell_loop)
+       ins-jmp
+       (asm-label-definition "__u_nth_cell_done")		; (r l 0)
+       ins-pop							; (r l)
+       ins-ret))
     
     (begin
       (append-instructions
-       (list 
-	(asm-label-definition "__u_cons")	; this is the internal entry point
-						; stack is (car cdr rp)
-	ins-rot
-	ins-push (asm-label-reference "__cons_body")
-	ins-jmp))					; stack is (rp  car cdr)      
+       (asm-label-definition "__u_cons")	; this is the internal entry point
+					; stack is (car cdr rp)
+       ins-rot
+       ins-push (asm-label-reference "__cons_body")
+       ins-jmp)					; stack is (rp  car cdr)
       (assembly-builtin-header "cons")
       (assembly-get-arg 0)
       (assembly-get-arg 1)
@@ -1081,33 +1079,32 @@
     (begin
       (assembly-builtin-header "string_q")
       (assembly-get-arg 0)
-      (append-instructions 
-       (list ins-dup 
-	     ins-isptr
-	     ins-push (asm-label-reference "__string_q_is_ptr")
-	     ins-jtrue 
-	     ins-pop
-	     ins-push "FALSE"))
+      (append-instructions
+       ins-dup 
+       ins-isptr
+       ins-push (asm-label-reference "__string_q_is_ptr")
+       ins-jtrue 
+       ins-pop
+       ins-push false-value)
       (assembly-funret)
       (append-instructions
-       (list (asm-label-definition "__string_q_is_ptr")
-	     ins-push ptr-type-offset
-	     ins-load
-	     ins-push string-type-flag
-	     ins-eq))
-      (assembly-funret))
-    
+       (asm-label-definition "__string_q_is_ptr")
+       ins-push ptr-type-offset
+       ins-load
+       ins-push string-type-flag
+       ins-eq)
+      (assembly-funret))    
     
     (begin
       (assembly-builtin-header "print_num")
       (assembly-get-arg 0)
-      (append-instructions (list ins-dup "PINT"))
+      (append-instructions ins-dup "PINT")
       (assembly-funret))
 
     (begin
       (assembly-builtin-header "print_char")
       (assembly-get-arg 0)
-      (append-instructions (list ins-dup "PCHR"))
+      (append-instructions ins-dup "PCHR")
       (assembly-funret))
 
     (begin
@@ -1123,39 +1120,39 @@
       (assembly-builtin-header "pair_q")
       (assembly-get-arg 0)
       (append-instructions 
-       (list ins-dup						; (rp x x)
-	     ins-isptr						; (rp x)
-	     ins-push (asm-label-reference "__pair_q_isptr")	; (rp x (is-ptr? x) @pair_q_isptr)
-	     ins-jtrue						; (rp x)
-	     (asm-label-definition "__pair_q_isnil")
-	     ins-pop						; (rp)
-	     (asm-label-definition "__pair_q_islconst") 
-	     ins-push false-value))				; (rp false)
+       ins-dup						; (rp x x)
+       ins-isptr					; (rp x)
+       ins-push (asm-label-reference "__pair_q_isptr")	; (rp x (is-ptr? x) @pair_q_isptr)
+       ins-jtrue					; (rp x)
+       (asm-label-definition "__pair_q_isnil")
+       ins-pop						; (rp)
+       (asm-label-definition "__pair_q_islconst") 
+       ins-push false-value)				; (rp false)
       (assembly-funret)
-								; this isn't the greatest heuristic,
-								; but at this point if the target of a 
-								; pointer is not a language constant,
-								; then the pointer points to a cons box.
+							; this isn't the greatest heuristic,
+							; but at this point if the target of a 
+							; pointer is not a language constant,
+							; then the pointer points to a cons box.
       (append-instructions
-       (list (asm-label-definition "__pair_q_isptr")		; (rp x)
-	     ins-dup						; (rp x x)
-	     ins-push (asm-label-reference "__nil")		; (rp x x nil)
-	     ins-eq						; (rp x (= x nil))
-	     ins-push (asm-label-reference "__pair_q_isnil")	; (rp x (= x nil) @pair_q_is_nil)
-	     ins-jtrue						; (rp x)
-	     ins-push ptr-type-offset				; (rp x 0)
-	     ins-load    
-	     "ISLCONST"
-	     ins-push (asm-label-reference "__pair_q_islconst")
-	     ins-jtrue	       
-	     ins-push true-value))
+       (asm-label-definition "__pair_q_isptr")		; (rp x)
+       ins-dup						; (rp x x)
+       ins-push (asm-label-reference "__nil")		; (rp x x nil)
+       ins-eq						; (rp x (= x nil))
+       ins-push (asm-label-reference "__pair_q_isnil")	; (rp x (= x nil) @pair_q_is_nil)
+       ins-jtrue					; (rp x)
+       ins-push ptr-type-offset				; (rp x 0)
+       ins-load    
+       "ISLCONST"
+       ins-push (asm-label-reference "__pair_q_islconst")
+       ins-jtrue	       
+       ins-push true-value)
       (assembly-funret))
     
 	; getting the length of a string is easy
     (begin
       (assembly-builtin-header "vector_length")
       (assembly-get-arg 0)
-      (append-instructions (list ins-push string-length-offset ins-load))
+      (append-instructions ins-push string-length-offset ins-load)
       (assembly-funret))
     
     (begin
@@ -1164,110 +1161,108 @@
       (assembly-get-arg 0)		; (c vec)
       (assembly-get-arg 1)		; (c vec n)
       (append-instructions
-       (list ins-push vector-elems-offset ; (c vec n 2)
-	     ins-add			; (c vec (+ n 2))
-	     ins-stor))			; (vec)      
+       ins-push vector-elems-offset	; (c vec n 2)
+       ins-add				; (c vec (+ n 2))
+       ins-stor)			; (vec)      
       (assembly-funret))
     
     (begin 
       (assembly-builtin-header "vector_fill")
-      (assembly-get-arg 0)						; (s)
+      (assembly-get-arg 0)					; (s)
       
       (append-instructions 
-       (list ins-push (asm-number 0)))					; (s 0)
-      (append-instructions 
-       (list (asm-label-definition "__vector_fill_loop")		; (s n)
-	     ins-swap							; (n s)
-	     ins-dup							; (n s s)
-	     ins-rot							; (s n s)
-	     ins-push vector-length-offset				; (s n s vector-length-offset)
-	     ins-load							; (s n total-length)
-	     ins-swap							; (s total-length n)
-	     ins-dup							; (s total-length n n)
-	     ins-rot							; (s n total-length n)
-	     ins-eq							; (s n (= total-length n))
-	     ins-push (asm-label-reference "__vector_fill_done")	; (s n (= total-length n) @done)
-	     ins-jtrue							; (s n)
-	     ins-dup							; (s n n)
-	     ins-rot							; (n s n)
-	     ins-push vector-elems-offset				; (n s n offset)
-	     ins-add))							; (n s (+ n offset))
-      (assembly-get-arg 1)						; (n s (+ n offset) v)
+       ins-push (asm-number 0)					; (s 0)
+       (asm-label-definition "__vector_fill_loop")		; (s n)
+       ins-swap							; (n s)
+       ins-dup							; (n s s)
+       ins-rot							; (s n s)
+       ins-push vector-length-offset				; (s n s vector-length-offset)
+       ins-load							; (s n total-length)
+       ins-swap							; (s total-length n)
+       ins-dup							; (s total-length n n)
+       ins-rot							; (s n total-length n)
+       ins-eq							; (s n (= total-length n))
+       ins-push (asm-label-reference "__vector_fill_done")	; (s n (= total-length n) @done)
+       ins-jtrue						; (s n)
+       ins-dup							; (s n n)
+       ins-rot							; (n s n)
+       ins-push vector-elems-offset				; (n s n offset)
+       ins-add)							; (n s (+ n offset))
+      (assembly-get-arg 1)					; (n s (+ n offset) v)
       (append-instructions
-       (list ins-rot							; (n v s (+ n offset))
-	     ins-stor							; (n s)
-	     ins-swap							; (s n)
-	     ins-push (asm-number 1)					; (s n 1)
-	     ins-add							; (s (+ n 1))
-	     ins-push (asm-label-reference "__vector_fill_loop")
-	     ins-jmp
-	     (asm-label-definition "__vector_fill_done")		; (s n)
-	     ins-pop))
+       ins-rot							; (n v s (+ n offset))
+       ins-stor							; (n s)
+       ins-swap							; (s n)
+       ins-push (asm-number 1)					; (s n 1)
+       ins-add							; (s (+ n 1))
+       ins-push (asm-label-reference "__vector_fill_loop")
+       ins-jmp
+       (asm-label-definition "__vector_fill_done")		; (s n)
+       ins-pop)
       (assembly-funret))
 
     (begin 
       (append-instructions 
-       (list (asm-label-definition "__u_make_vector_nofill")	; (n rp)
-	     ins-swap						; (rp n)
-	     ins-dup						; (n n)
-	     ins-push vector-elems-offset	       		; (n n vector-elems-offset)
-	     ins-add						; (n (+ n vector-elems-offset))
-	     ins-aloc						; (n v)
-	     ins-push vector-type-flag				; (n v vector-type-flag)
-	     ins-swap						; (n vector-type-flag v)
-	     ins-push ptr-type-offset				; (n vector-type-flag v ptr-type-offset)
-	     ins-stor						; (n v)
-	     ins-push vector-length-offset			; (n v vector-size-offset)
-	     ins-stor						; (v)
-	     ins-ret))
+       (asm-label-definition "__u_make_vector_nofill")	; (n rp)
+       ins-swap						; (rp n)
+       ins-dup						; (n n)
+       ins-push vector-elems-offset	       		; (n n vector-elems-offset)
+       ins-add						; (n (+ n vector-elems-offset))
+       ins-aloc						; (n v)
+       ins-push vector-type-flag			; (n v vector-type-flag)
+       ins-swap						; (n vector-type-flag v)
+       ins-push ptr-type-offset				; (n vector-type-flag v ptr-type-offset)
+       ins-stor						; (n v)
+       ins-push vector-length-offset			; (n v vector-size-offset)
+       ins-stor						; (v)
+       ins-ret)
       (assembly-builtin-header "make_vector")
-      (assembly-get-arg 0)					; n
+      (assembly-get-arg 0)				; n
       (append-instructions
-       (list 
-	ins-push (asm-label-reference "__u_make_vector_nofill")
-	ins-call))						; (v)
+       ins-push (asm-label-reference "__u_make_vector_nofill")
+       ins-call)					; (v)
       (assembly-set-arg 0)
       (append-instructions 
-       (list ins-push (asm-label-reference "__vector_fill") 
-      	     ins-jmp)))
+       ins-push (asm-label-reference "__vector_fill") 
+       ins-jmp))
 
     (begin
       (assembly-builtin-header "make_string")
       (assembly-get-arg 0)							; (n)
       (append-instructions 
-       (list ins-dup								; (n n)
-	     ins-push string-chars-offset      					; (n n 2)
-	     ins-add								; (n (+ n 2))
-	     ins-aloc								; (n s)
-	     ins-push string-length-offset     					; (n s 1)
-	     ins-stor								; (s)
-	     ins-push string-type-flag						; (s string-type-flag)
-	     ins-swap								; (string-type-flag s)
-	     ins-push ptr-type-offset						; (string-type-flag s 0)
-	     ins-stor								; (s)
-	     ))
-      (assembly-nrargs) ; (s nr-args)
+       ins-dup									; (n n)
+       ins-push string-chars-offset      					; (n n 2)
+       ins-add									; (n (+ n 2))
+       ins-aloc									; (n s)
+       ins-push string-length-offset     					; (n s 1)
+       ins-stor									; (s)
+       ins-push string-type-flag						; (s string-type-flag)
+       ins-swap									; (string-type-flag s)
+       ins-push ptr-type-offset							; (string-type-flag s 0)
+       ins-stor									; (s)
+       )
+      (assembly-nrargs)								; (s nr-args)
       (append-instructions 
-       (list ins-push (asm-number 2) ; (s nr-args 2)
-	     ins-eq                  ; (s (= nr-args 2))
-	     ins-push (asm-label-reference "__make_string_two_args")		; (s (is-char? c?) make_string_two_args)
-	     ins-jtrue))								; (s)
+       ins-push (asm-number 2)							; (s nr-args 2)
+       ins-eq									; (s (= nr-args 2))
+       ins-push (asm-label-reference "__make_string_two_args")			; (s (is-char? c?) make_string_two_args)
+       ins-jtrue)								; (s)
       (assembly-funret)
       (append-instruction (asm-label-definition "__make_string_two_args"))	; (s)
       (assembly-set-arg 0)
       (append-instructions 
-       (list ins-push (asm-label-reference "vector_fill")
-	     ins-jmp)))
+       ins-push (asm-label-reference "vector_fill")
+       ins-jmp))
 
     (begin
       (assembly-builtin-header "vector_ref")
       (assembly-get-arg 0)
       (assembly-get-arg 1)
       (append-instructions 
-       (list ins-push vector-elems-offset
+       ins-push vector-elems-offset
 	     ins-add
-	     ins-load))
-      (assembly-funret))			    
+	     ins-load)
+      (assembly-funret)) 			    
     
     (begin 
       (assembly-builtin-header "vapply")
@@ -1279,7 +1274,7 @@
       (assembly-builtin-header "eof_object_q")
       (assembly-get-arg 0)
       (append-instructions
-       (list ins-push "EOF" ins-eq))
+       ins-push "EOF" ins-eq)
       (assembly-funret))))
 	   
 
@@ -1488,7 +1483,7 @@
 ; (newline)
 
 (append-instructions 
- (list ins-push (asm-label-reference initial-env-label) ins-wtrr))
+ ins-push (asm-label-reference initial-env-label) ins-wtrr)
 (compiler-run)
 (append-initial-env)
 (define-builtin-functions initial-env-label)
