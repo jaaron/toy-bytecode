@@ -218,6 +218,7 @@
 	   ("string-set!"	 "vector_set")
 	   ("string-ref"	 "vector_ref")
 	   ("string-length"	 "vector_length") 
+	   ("vapply"             "vapply")
 	   ("char=?"		 "equal")     ;; for characters
 	   ("char<?"		 "less_than") ;; for characters
 	   ("eof-object?"	 "eof_object_q")))))
@@ -412,7 +413,7 @@
 
 ; (args clos) -> ((clos args)) 
 (define assembly-funcall (lambda ()
-			   (append-instruction ins-dup)      ; (args clos clos)
+			   (append-instruction ins-dup)    ; (args clos clos)
 			    (u-call-car)                   ; (args clos env)
 			    (append-instructions 
 			     (list ins-swap                  ; (args env clos)
@@ -433,23 +434,23 @@
 ; tail calls are sneakier we avoid saving the current
 ; env pointer. 
 ; (args clos) -> ((clos args))
-(define assembly-tailcall (lambda ()
-			    (append-instruction ins-dup)  ; (renv rp args clos clos)
-			    (u-call-car)                ; (renv rp args clos env)			    
+ (define assembly-tailcall (lambda ()
+			    (append-instruction ins-dup)	; (renv rp args clos clos)
+			    (u-call-car)			; (renv rp args clos env)			    
 			    (append-instructions
-			     (list ins-swap               ; (renv rp args env clos)
-				   ins-rot))              ; (renv rp clos args env)
-			    (u-call-cons)               ; (renv rp clos (args . env)* )
-			    (append-instruction ins-wtrr) ; (renv rp clos) rr = (args . env)
-					                ; note that we didn't store the current env
-					                ; this is a tail call so we'll return straight
-			                                ; to the current renv/rp!
-			    (u-call-cdr)                ; (renv rp code)
-			    (append-instruction ins-jmp)  ; we jump into the call with 
-                                                        ;   (renv rp) 
-			                                ; on return we'll have pc = rp, and
-			                                ;   (renv rval) on the stack
-				                   	; just as on return from non-tail call above.
+			     (list ins-swap			; (renv rp args env clos)
+				   ins-rot))			; (renv rp clos args env)
+			    (u-call-cons)			; (renv rp clos (args . env)* )
+			    (append-instruction ins-wtrr)	; (renv rp clos) rr = (args . env)
+								; note that we didn't store the current env
+								; this is a tail call so we'll return straight
+								; to the current renv/rp!
+			    (u-call-cdr)			; (renv rp code)
+			    (append-instruction ins-jmp)	; we jump into the call with 
+								;   (renv rp) 
+								; on return we'll have pc = rp, and
+								;   (renv rval) on the stack
+								; just as on return from non-tail call above.
 			    ))
 
 ; returning is simple since cleanup is handled by the caller
@@ -1170,37 +1171,37 @@
     
     (begin 
       (assembly-builtin-header "vector_fill")
-      (assembly-get-arg 0)					; (s)
+      (assembly-get-arg 0)						; (s)
       
       (append-instructions 
-       (list ins-push (asm-number 0)))				; (s 0)
+       (list ins-push (asm-number 0)))					; (s 0)
       (append-instructions 
-       (list (asm-label-definition "__vector_fill_loop")	; (s n)
-	     ins-swap						; (n s)
-	     ins-dup						; (n s s)
-	     ins-rot						; (s n s)
-	     ins-push vector-length-offset			; (s n s vector-length-offset)
-	     ins-load						; (s n total-length)
-	     ins-swap						; (s total-length n)
-	     ins-dup						; (s total-length n n)
-	     ins-rot						; (s n total-length n)
-	     ins-eq						; (s n (= total-length n))
+       (list (asm-label-definition "__vector_fill_loop")		; (s n)
+	     ins-swap							; (n s)
+	     ins-dup							; (n s s)
+	     ins-rot							; (s n s)
+	     ins-push vector-length-offset				; (s n s vector-length-offset)
+	     ins-load							; (s n total-length)
+	     ins-swap							; (s total-length n)
+	     ins-dup							; (s total-length n n)
+	     ins-rot							; (s n total-length n)
+	     ins-eq							; (s n (= total-length n))
 	     ins-push (asm-label-reference "__vector_fill_done")	; (s n (= total-length n) @done)
-	     ins-jtrue						; (s n)
-	     ins-dup						; (s n n)
-	     ins-rot						; (n s n)
+	     ins-jtrue							; (s n)
+	     ins-dup							; (s n n)
+	     ins-rot							; (n s n)
 	     ins-push vector-elems-offset				; (n s n offset)
-	     ins-add))						; (n s (+ n offset))
-      (assembly-get-arg 1)					; (n s (+ n offset) v)
+	     ins-add))							; (n s (+ n offset))
+      (assembly-get-arg 1)						; (n s (+ n offset) v)
       (append-instructions
-       (list ins-rot						; (n v s (+ n offset))
-	     ins-stor						; (n s)
-	     ins-swap                                             ; (s n)
-	     ins-push (asm-number 1)				; (s n 1)
-	     ins-add						; (s (+ n 1))
+       (list ins-rot							; (n v s (+ n offset))
+	     ins-stor							; (n s)
+	     ins-swap							; (s n)
+	     ins-push (asm-number 1)					; (s n 1)
+	     ins-add							; (s (+ n 1))
 	     ins-push (asm-label-reference "__vector_fill_loop")
 	     ins-jmp
-	     (asm-label-definition "__vector_fill_done")	; (s n)
+	     (asm-label-definition "__vector_fill_done")		; (s n)
 	     ins-pop))
       (assembly-funret))
 
@@ -1208,9 +1209,8 @@
       (append-instructions 
        (list (asm-label-definition "__u_make_vector_nofill")	; (n rp)
 	     ins-swap						; (rp n)
-	     (asm-label-definition "__u_make_vector_nofill_body")
 	     ins-dup						; (n n)
-	     ins-push vector-elems-offset				; (n n vector-elems-offset)
+	     ins-push vector-elems-offset	       		; (n n vector-elems-offset)
 	     ins-add						; (n (+ n vector-elems-offset))
 	     ins-aloc						; (n v)
 	     ins-push vector-type-flag				; (n v vector-type-flag)
@@ -1224,12 +1224,12 @@
       (assembly-get-arg 0)					; n
       (append-instructions
        (list 
-	ins-push (asm-label-reference "__u_make_vector_nofill_body")
+	ins-push (asm-label-reference "__u_make_vector_nofill")
 	ins-call))						; (v)
       (assembly-set-arg 0)
       (append-instructions 
-       (list ins-push (asm-label-reference "vector_fill") 
-	     ins-jmp)))
+       (list ins-push (asm-label-reference "__vector_fill") 
+      	     ins-jmp)))
 
     (begin
       (assembly-builtin-header "make_string")
@@ -1269,6 +1269,12 @@
 	     ins-load))
       (assembly-funret))			    
     
+    (begin 
+      (assembly-builtin-header "vapply")
+      (assembly-get-arg 1)
+      (assembly-get-arg 0)
+      (assembly-tailcall))
+
     (begin 
       (assembly-builtin-header "eof_object_q")
       (assembly-get-arg 0)

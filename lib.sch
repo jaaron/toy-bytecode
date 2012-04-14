@@ -103,16 +103,34 @@
 						     (print-char #\f))
 					      #t)))))))))
 
+(define vector->list
+  (lambda (s) (reverse (vector-fold (lambda (c l) (cons c l)) nil s 0 (vector-length s)))))
+
+(define string->list vector->list)
+
+(define list->vector
+  (lambda (l) (let ((v (make-vector (length l) '())))
+		(fold (lambda (idx val)
+			(vector-set! v idx val)
+			(+ idx 1)) 0 l)
+		v)))
+
 (define list->string 
   (lambda (l)
     (let ((s (make-string (length l))))
       (fold (lambda (i c) (string-set! s i c) (+ i 1)) 0 l)
       s)))
 
-(define vector->list
-  (lambda (s) (reverse (vector-fold (lambda (c l) (cons c l)) nil s 0 (vector-length s)))))
-
-(define string->list vector->list)
+(define apply
+  (lambda (f . argl)
+    (letrec ((prepargs (lambda (acc l)
+			 (if (null? l)
+			     (reverse acc)
+			     (if (null? (cdr l))
+				 (append (reverse acc) (car l))
+				 (prepargs (cons (car l) acc) (cdr l)))))))
+      (let ((args (prepargs '() argl)))
+	(vapply f (list->vector args))))))
 
 (define string-append
   (lambda (s1 s2)
