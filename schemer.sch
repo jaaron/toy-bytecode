@@ -412,33 +412,40 @@
 
 ; (args clos) -> ((clos args)) 
 (define assembly-funcall (lambda ()
-			   (append-instruction ins-dup) ; (args clos clos)
-			    (u-call-car)                ; (args clos env)
+			   (append-instructions ; (args clos rp)
+			    (asm-label-definition "__funcall_tramp")
+			    ins-rot             ; (rp args clos)
+			    ins-dup)            ; (rp args clos clos)
+			    (u-call-car)        ; (rp args clos env)
 			    (append-instructions 
-			     ins-swap			; (args env clos)
-			     ins-rot)			; (clos args env)
-			    (u-call-cons)	        ; (clos (args . env)*)
+			     ins-swap		; (rp args env clos)
+			     ins-rot)		; (rp clos args env)
+			    (u-call-cons)	; (rp clos (args . env)*)
 			    (append-instructions
-			     ins-rdrr			; stack is (clos (args . env) renv)
-			     ins-swap			; stack is (clos renv (args . env) )
-			     ins-wtrr			; stack is (clos renv) rr = (args . env)
-			     ins-swap)			; stack is (renv clos) 
-			    (u-call-cdr)                ; stack is (renv clos-code)
-			    (append-instructions
-			     ins-call			; make the call.  we'll have (renv rval)
-			     ins-swap			; stack is (rval renv)
-			     ins-wtrr			; stack is (rval) rr = renv
-			     )))
+			     ins-rdrr		; (rp clos (args . env) renv)
+			     ins-swap		; (rp clos renv (args . env) )
+			     ins-wtrr		; (rp clos renv) rr = (args . env)
+			     ins-rot)		; (renv rp clos) 
+			    (u-call-cdr)        ; (renv rp clos-code)
+			    (append-instruction ins-jmp)))
+
+(define u-call-funcall (lambda ()
+			 (append-instructions ins-push (asm-label-reference "__funcall_tramp")
+					      ins-call
+					      ins-swap
+					      ins-wtrr)))
 
 ; tail calls are sneakier we avoid saving the current
 ; env pointer. 
 ; (args clos) -> ((clos args))
  (define assembly-tailcall (lambda ()
-			    (append-instruction ins-dup)	; (renv rp args clos clos)
+			    (append-instructions
+			     (asm-label-definition "__tailcall_tramp")
+			     ins-dup)				; (renv rp args clos clos)
 			    (u-call-car)			; (renv rp args clos env)			    
 			    (append-instructions
-			     ins-swap			; (renv rp args env clos)
-			     ins-rot)			; (renv rp clos args env)
+			     ins-swap				; (renv rp args env clos)
+			     ins-rot)				; (renv rp clos args env)
 			    (u-call-cons)			; (renv rp clos (args . env)* )
 			    (append-instruction ins-wtrr)	; (renv rp clos) rr = (args . env)
 								; note that we didn't store the current env
@@ -451,6 +458,10 @@
 								;   (renv rval) on the stack
 								; just as on return from non-tail call above.
 			    ))
+
+(define u-call-tailcall (lambda ()
+			  (append-instructions "PUSH" (asm-label-reference "__tailcall_tramp")
+					       "JMP")))
 
 ; returning is simple since cleanup is handled by the caller
 (define assembly-funret (lambda () (append-instruction ins-ret)))
@@ -859,8 +870,8 @@
 	  (let ((r1 (compile-arguments (length (cdr l)) (cdr l) env))
 		(r2 (compile-sexp (car l) env #t)))	   	    
 	    (if rest
-		(assembly-funcall)
-		(assembly-tailcall)
+		(u-call-funcall)
+		(u-call-tailcall)
 		)
 	    (lambda ()
 	      (do-compile-task r1)
@@ -1267,8 +1278,10 @@
     (begin 
       (assembly-builtin-header "vapply")
       (assembly-get-arg 1)
-      (assembly-get-arg 0)
-      (assembly-tailcall))
+      (assembly-get-arg 0)) ; fall thru into tailcall    
+    (assembly-tailcall)     ; do not move the definition of tailcall!!
+
+    (assembly-funcall)
 
     (begin 
       (assembly-builtin-header "eof_object_q")
