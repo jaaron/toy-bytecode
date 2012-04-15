@@ -56,8 +56,14 @@ assembler.yy.c : assembler.l interpreter.h
 test: schemer-bootstrap.asm schemer.asm
 	diff -q schemer-bootstrap.asm schemer.asm
 
+%.asm :  %.sch schemer.bytecode lib.sch interpreter
+	cat lib.sch $< | ./interpreter schemer.bytecode > $@
+
+%.bytecode : %.asm assembler
+	./assembler < $< > $@
+
 clean : 
-	rm -f *~ assembler.yy.c *.o *.asm *-bootstrap*
+	rm -f *~ assembler.yy.c *.o *.asm *-bootstrap* 
 
 distclean : clean
 	rm -f interpreter trace-interpreter assembler *.asm *.bytecode
