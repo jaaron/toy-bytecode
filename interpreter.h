@@ -40,6 +40,7 @@ typedef uint32_t uword;
 
 #define PTR_TARGET_BITS  18
 #define PTR_SIZE_MASK    ((1<<(DATA_BITS - PTR_TARGET_BITS))-1)
+#define MAX_PTR_SIZE     PTR_SIZE_MASK
 #define PTR_TARGET_MASK  ((1<<PTR_TARGET_BITS)-1)
 #define MAKE_PTR(x,sz)   (PTR | ((((uword)sz) & PTR_SIZE_MASK) << PTR_TARGET_BITS) | ((x) & PTR_TARGET_MASK))
 

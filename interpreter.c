@@ -347,7 +347,7 @@ void gc(word *new_heap)
   word *work = worklist;
   int i;
   word tmp, val;
-  memset(mappings, 0xffffffff, MEM_SIZE*sizeof(word));
+  memset(mappings, (word)-1, MEM_SIZE*sizeof(word));
 
   hp = new_heap;
 
@@ -492,8 +492,8 @@ void gc(word *new_heap)
 		    PTR_TARGET(val), PTR_SIZE(val));
 #endif
 	    /* the target of this pointer is in the program text just
-	    perform a straight copy and set the value for this cell in
-	    the mappings to the identity map */
+	       perform a straight copy and set the value for this cell in
+	       the mappings to the identity map */
 	    memory[PTR_TARGET(mappings[PTR_TARGET(tmp)]) + i] = mappings[PTR_TARGET(val)] = val;
 	  }
 	}else{
@@ -860,13 +860,19 @@ int main(int argc, char *argv[])
 
   /* Memory Allocation */
   INSTRUCTION(ALOC, do{
-      word __tmp;
-      ASSERT_TYPE(STACK(0), NUM);
-      HEAP_CHECK(NUM_TO_NATIVE(STACK(0)));
-      __tmp = MAKE_PTR(hp - memory, NUM_TO_NATIVE(STACK(0)));
-      hp += NUM_TO_NATIVE(STACK(0));
-      STACK(0) = __tmp;
-    }while(0));
+	  word __tmp;
+	  word __sz;
+	  ASSERT_TYPE(STACK(0), NUM);
+	  __sz = NUM_TO_NATIVE(STACK(0));
+	  if(__sz > MAX_PTR_SIZE){
+	      fprintf(stderr, "Requested allocation %d too large.", __sz);
+	      exit(1);
+	  }
+	  HEAP_CHECK(__sz);
+	  __tmp = MAKE_PTR(hp - memory, __sz);
+	  hp += __sz;
+	  STACK(0) = __tmp;
+      }while(0));
   
   /* I/O */
   INSTRUCTION(GETC, STACK_PUSH(MAKE_CHAR(getchar())));
