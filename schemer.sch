@@ -17,9 +17,9 @@
 
 ; utility functions
 (define last (lambda (l) (if (and (not (null? l)) 
-				  (and (pair? l)
-				       (and (pair? (cdr l))
-					    (not (null? (cdr l))))))
+				  (pair? l)
+				  (pair? (cdr l))
+				  (not (null? (cdr l))))
 			     (last (cdr l))
 			     l)))
 
@@ -28,12 +28,12 @@
 				   (strlen     (string-length str))
 				   (test (lambda (c v) (if v (char-is-digit? c) v))))
 			       (and (< 0 strlen)
-				    (or (and (< 1 strlen)
-					     (and
-					      (or (char=? first-char #\-)
-						  (or (char=? first-char #\+)
-						      (char-is-digit? first-char)))
-					      (string-fold test #t str 1 (string-length str))))
+				    (if (< 1 strlen)
+					(and 
+					 (or (char=? first-char #\-)
+					     (char=? first-char #\+)
+					     (char-is-digit? first-char))
+					 (string-fold test #t str 1 (string-length str)))
 					(char-is-digit? first-char))))))
 
 
@@ -696,7 +696,7 @@
 	(append-instruction (asm-label-definition label))
 	(let ((r (compile-sequence (cddr l)
 				   (cons 
-				    (cadr l)
+				    (process-params (cadr l))
 				    env) #f)))
 	  (assembly-funret)
 	  r)))))
@@ -799,40 +799,51 @@
       r)))
   
 (define compile-and
-  (lambda (l env rest)
+  (lambda (l env rest)    
     (let ((out-label (fresh-label)))
-      (let ((r1    (compile-sexp (cadr l) env #t))
-	    (xx    (append-instructions ins-dup
-					ins-push false-value
-					ins-eq
-					ins-push (asm-label-reference out-label)
-					ins-jtrue
-					ins-pop))
-	    (r2    (compile-sexp (caddr l) env #t)))
-	(append-instruction (asm-label-definition out-label))
-	(lambda ()
-	  (do-compile-task r1)
-	  (do-compile-task r2))))))
+      (letrec ((helper (lambda (es rs)
+			 (let ((r  (compile-sexp (car es) env #t))
+			       (es (cdr es)))
+			   (if (null? es)
+			       (begin
+				 (append-instruction (asm-label-definition out-label))
+				 (lambda () (do-compile-task r) (rs)))
+			       (begin
+				 (append-instructions ins-dup 
+						      ins-push false-value
+						      ins-eq
+						      ins-push (asm-label-reference out-label)
+						      ins-jtrue
+						      ins-pop)
+				 (helper es (lambda () (do-compile-task r) (rs)))))))))
+      (if (null? (cdr l)) 
+	  (append-instructions ins-push true-value)
+	  (helper (cdr l) (lambda () #f)))))))
       
 (define compile-or
   (lambda (l env rest)
-    (let ((out-label (fresh-label))
-	  (t2-label  (fresh-label)))
-      (let ((r1      (compile-sexp (cadr l) env #t))
-	    (xx      (append-instructions ins-dup
-					  ins-push false-value
-					  ins-eq
-					  ins-push (asm-label-reference t2-label)
-					  ins-jtrue
-					  ins-push  (asm-label-reference out-label)
-					  ins-jmp
-					  (asm-label-definition t2-label)
-					  ins-pop))
-	    (r2      (compile-sexp (caddr l) env #t)))
-	(append-instructions (asm-label-definition out-label))
-	(lambda ()
-	  (do-compile-task r1)
-	  (do-compile-task r2))))))
+    (let ((out-label (fresh-label)))
+      (letrec ((helper (lambda (es rs)
+			 (let ((r  (compile-sexp (car es) env #t))
+			       (es (cdr es)))
+			   (if (null? es) 
+			       (begin
+				 (append-instruction (asm-label-definition out-label))
+				 (lambda () (do-compile-task r) (rs)))
+			       (let ((next-term (fresh-label)))
+				 (append-instructions ins-dup
+						      ins-push false-value
+						      ins-eq
+						      ins-push (asm-label-reference next-term)
+						      ins-jtrue
+						      ins-push (asm-label-reference out-label)
+						      ins-jmp
+						      (asm-label-definition next-term)
+						      ins-pop)
+				 (helper es (lambda () (do-compile-task r) rs))))))))
+	(if (null? (cdr l))
+	    (append-instructions ins-push false-value)
+	    (helper (cdr l) (lambda () #f)))))))
 
 ; when we can detect application of a builtin
 ; we can avoid function call overhead and just inline the assembly
