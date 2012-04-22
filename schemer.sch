@@ -16,24 +16,25 @@
 ;; along with toy-bytecode.  If not, see <http://www.gnu.org/licenses/>.
 
 ; utility functions
-(define last (lambda (l) (if (null? l) l 
-			     (if (not (pair? l)) l 
-				 (if (not (pair? (cdr l))) l 
-				     (if (null? (cdr l)) l
-					 (last (cdr l))))))))
+(define last (lambda (l) (if (and (not (null? l)) 
+				  (and (pair? l)
+				       (and (pair? (cdr l))
+					    (not (null? (cdr l))))))
+			     (last (cdr l))
+			     l)))
 
 (define string-is-numeric? (lambda (str)
 			     (let ((first-char (string-ref str 0))
 				   (strlen     (string-length str))
-				   (test (lambda (c v) (if (not v) v (char-is-digit? c)))))
-			       (if (= 0 strlen) #f
-				   (if (< 1 strlen)
-				       (if (if (char=? first-char #\-) #t
-					       (if (char=? first-char #\+) #t
-						   (char-is-digit? first-char)))
-					   (string-fold test #t str 1 (string-length str))
-					   #f)
-				   (char-is-digit? first-char))))))
+				   (test (lambda (c v) (if v (char-is-digit? c) v))))
+			       (and (< 0 strlen)
+				    (or (and (< 1 strlen)
+					     (and
+					      (or (char=? first-char #\-)
+						  (or (char=? first-char #\+)
+						      (char-is-digit? first-char)))
+					      (string-fold test #t str 1 (string-length str))))
+					(char-is-digit? first-char))))))
 
 
 ; The underlying VM uses a tagged memory model that differentiates between
@@ -139,6 +140,8 @@
      (cons "define" compile-define)  
      (cons "begin"  compile-begin)
      (cons "quote"  compile-quote)
+     (cons "and"    compile-and)
+     (cons "or"     compile-or)
      )
     ))
 
@@ -148,9 +151,9 @@
     (lambda (f) 
       (letrec ((helper (lambda (ss)
 			 (if (null? ss) #f
-			     (if (not (string? f)) #f
-				 (if (string=? f (car (car ss))) (cdr (car ss))
-				     (helper (cdr ss))))))))
+			     (if (string=? f (car (car ss))) 
+				 (cdr (car ss))
+				 (helper (cdr ss)))))))
 	(helper (special-forms)))))
 
 ; The top-level-env is a list containing the list of symbols 
@@ -188,7 +191,8 @@
 ;       u-call-* below.
 
 (define top-level-env 
-  (quote ((("="			 "equal")
+  (quote ((("equal?"             "equal")
+	   ("="			 "equal")
 	   ("<"			 "less_than")
 	   ("null?"	         "null_q")
 	   ("cons"		 "cons")
@@ -690,14 +694,12 @@
       (u-call-cons)
       (lambda ()	
 	(append-instruction (asm-label-definition label))
-	(let ((param-list (car (cdr l)))
-	      (body       (cdr (cdr l))))
-	  (let ((r (compile-sequence body 
-				     (cons 
-				      (process-params param-list)
-				      env) #f)))
-	    (assembly-funret)
-	    r))))))
+	(let ((r (compile-sequence (cddr l)
+				   (cons 
+				    (cadr l)
+				    env) #f)))
+	  (assembly-funret)
+	  r)))))
 
 (define compile-let-bindings
   (lambda (bs env)
@@ -796,6 +798,42 @@
       (append-instruction ins-pop)
       r)))
   
+(define compile-and
+  (lambda (l env rest)
+    (let ((out-label (fresh-label)))
+      (let ((r1    (compile-sexp (cadr l) env #t))
+	    (xx    (append-instructions ins-dup
+					ins-push false-value
+					ins-eq
+					ins-push (asm-label-reference out-label)
+					ins-jtrue
+					ins-pop))
+	    (r2    (compile-sexp (caddr l) env #t)))
+	(append-instruction (asm-label-definition out-label))
+	(lambda ()
+	  (do-compile-task r1)
+	  (do-compile-task r2))))))
+      
+(define compile-or
+  (lambda (l env rest)
+    (let ((out-label (fresh-label))
+	  (t2-label  (fresh-label)))
+      (let ((r1      (compile-sexp (cadr l) env #t))
+	    (xx      (append-instructions ins-dup
+					  ins-push false-value
+					  ins-eq
+					  ins-push (asm-label-reference t2-label)
+					  ins-jtrue
+					  ins-push  (asm-label-reference out-label)
+					  ins-jmp
+					  (asm-label-definition t2-label)
+					  ins-pop))
+	    (r2      (compile-sexp (caddr l) env #t)))
+	(append-instructions (asm-label-definition out-label))
+	(lambda ()
+	  (do-compile-task r1)
+	  (do-compile-task r2))))))
+
 ; when we can detect application of a builtin
 ; we can avoid function call overhead and just inline the assembly
 (define compile-if
@@ -1492,9 +1530,6 @@
   (lambda () (parse-token (next-token))))
 
 ; then run the compiler.
-; (display (read-datum (next-non-ws-skip-comments)))
-; (newline)
-
 (append-instructions 
  ins-push (asm-label-reference initial-env-label) ins-wtrr)
 (compiler-run)
