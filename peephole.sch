@@ -442,34 +442,34 @@
 
 (define peephole 
   (let ((optimizers (list
-		      ;; (push x pop) -> ()
+		     ;; (push x pop) -> ()
 		     (list 3 (lambda (xs) (and (is-push-instr? (car xs))
-					   (is-pop-instr? (caddr xs))))
-			   (lambda (xs ys) ys))
+					       (is-pop-instr? (caddr xs))))
+		     	   (lambda (xs ys) ys))
 		     ;; (swap swap) -> ()
 		     (list 2 (lambda (xs) (and (is-swap-instr? (car xs))
-					       (is-swap-instr? (cadr xs))))
-			   (lambda (xs ys) ys))
+		     			       (is-swap-instr? (cadr xs))))
+		     	   (lambda (xs ys) ys))
 		     ;; (binop pop) -> (pop pop)
 		     (list 2 (lambda (xs) (and (is-binop-instr? (car xs))
-					       (is-pop-instr? (cadr xs))))
-			   (lambda (xs ys) (cons (cons tag-instruction ins-pop)
-						 (cons (cons tag-instruction ins-pop) ys))))
+		     			       (is-pop-instr? (cadr xs))))
+		     	   (lambda (xs ys) (cons (cons tag-instruction ins-pop)
+		     				 (cons (cons tag-instruction ins-pop) ys))))
 		     ;; (push x push y add)
 		     (list 5 (lambda (xs) (matches (list is-push-instr?
-							 is-number?
-							 is-push-instr?
-							 is-number?
-							 is-binop-instr?) xs))
-			   (lambda (xs ys)
-			     (let ((n0 (cdr (cadr xs)))
-				   (n1 (cdr (cadddr xs)))
-				   (op (cdr (cadr (cdddr xs)))))
-			       (append
-				(list (cons tag-instruction ins-push)
-				      (cons tag-number
-					    ((cdr (assoc op inliners)) n0 n1)))
-				ys))))
+		     					 is-number?
+		     					 is-push-instr?
+		     					 is-number?
+		     					 is-binop-instr?) xs))
+		     	   (lambda (xs ys)
+		     	     (let ((n0 (cdr (cadr xs)))
+		     		   (n1 (cdr (cadddr xs)))
+		     		   (op (cdr (cadr (cdddr xs)))))
+		     	       (append
+		     		(list (cons tag-instruction ins-push)
+		     		      (cons tag-number
+		     			    ((cdr (assoc op inliners)) n0 n1)))
+		     		ys))))
 		     ;; accessing two local variables in a row
 		     ;; (RDRR PUSH n0 LOAD PUSH x    LOAD RDRR PUSH n0 LOAD) ->
 		     ;; (RDRR PUSH n0 LOAD DUP  PUSH x    LOAD SWAP)
@@ -490,14 +490,14 @@
 			   (lambda (xs ys) (let ((off (car (cddr (cdddr xs)))))
 					     (append
 					      (list (mkinstr ins-rdrr)
-						   (mkinstr ins-push)
-						   (mknum 0)
-						   (mkinstr ins-load)
-						   (mkinstr ins-dup)
-						   (mkinstr ins-push)
-						   off
-						   (mkinstr ins-load)
-						   (mkinstr ins-swap))
+						    (mkinstr ins-push)
+						    (mknum 0)
+						    (mkinstr ins-load)
+						    (mkinstr ins-dup)
+						    (mkinstr ins-push)
+						    off
+						    (mkinstr ins-load)
+						    (mkinstr ins-swap))
 					      ys)))
 			   ))))
 
