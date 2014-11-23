@@ -18,7 +18,7 @@
 # CFLAGS=-g
 CFLAGS ?= -O3
 
-all : schemer.bytecode interpreter trace-interpreter assembler
+all : schemer.bytecode peephole.bytecode interpreter trace-interpreter safe-interpreter assembler 
 
 interpreter : interpreter.o
 	gcc ${CFLAGS} -o interpreter interpreter.o
@@ -27,10 +27,16 @@ interpreter.o : interpreter.c interpreter.h
 	gcc ${CFLAGS} -c interpreter.c
 
 trace-interpreter : trace-interpreter.o
-	gcc ${CFLAGS} -o trace-interpreter -D__TRACE__ trace-interpreter.o
+	gcc ${CFLAGS} -o trace-interpreter trace-interpreter.o
 
 trace-interpreter.o : interpreter.c interpreter.h
-	gcc -c ${CFLAGS} -o trace-interpreter.o -D__TRACE__ interpreter.c
+	gcc -c ${CFLAGS} -o trace-interpreter.o -D__CHECK_INS__ -D__TRACE__ interpreter.c
+
+safe-interpreter : safe-interpreter.o
+	gcc ${CFLAGS} -o safe-interpreter safe-interpreter.o
+
+safe-interpreter.o : interpreter.c interpreter.h
+	gcc -c ${CFLAGS} -o safe-interpreter.o -D__CHECK_INS__ interpreter.c
 
 assembler : assembler.yy.o
 	gcc ${CFLAGS} -o assembler assembler.yy.o
@@ -66,4 +72,4 @@ clean :
 	rm -f *~ assembler.yy.c *.o *.asm *-bootstrap* 
 
 distclean : clean
-	rm -f interpreter trace-interpreter assembler *.asm *.bytecode
+	rm -f interpreter trace-interpreter safe-interpreter assembler *.asm *.bytecode
