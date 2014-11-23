@@ -409,6 +409,37 @@
 
 (define fold            (lambda (f s l) (if (null? l) s (fold f (f s (car l)) (cdr l)))))
 
+(define matches
+  (lambda (pat seq)
+    (if (null? pat) #t
+	(if (null? seq) #f
+	    (and ((car pat) (car seq))
+		 (matches (cdr pat) (cdr seq)))))))
+
+(define mkinstr (lambda (i) (cons tag-instruction i)))
+(define mknum   (lambda (n) (cons tag-number n)))
+
+(define inliners
+  (list (cons ins-add +)
+	(cons ins-sub -)
+	(cons ins-eq  =)
+	(cons ins-lt <)
+	(cons ins-mul *)
+	(cons ins-div quotient)
+	(cons ins-mod remainder)
+	(cons ins-shl ash)
+	(cons ins-shr (lambda (a b) (ash a (- 0 b))))
+	(cons ins-bor logior)
+	(cons ins-band logand)))
+
+(define is-rdrr-instr? (lambda (tok)
+			 (and (string=? tag-instruction (car tok) )
+			      (string=? ins-rdrr (cdr tok)))))
+
+(define is-load-instr? (lambda (tok)
+			 (and (string=? tag-instruction (car tok) )
+			      (string=? ins-load (cdr tok)))))
+
 (define peephole 
   (let ((optimizers (list
 		      ;; (push x pop) -> ()
@@ -425,11 +456,11 @@
 			   (lambda (xs ys) (cons (cons tag-instruction ins-pop)
 						 (cons (cons tag-instruction ins-pop) ys))))
 		     ;; (push x push y add)
-		     (list 5 (lambda (xs) (and (is-push-instr?  (car xs))
-					       (is-number?      (cadr xs))
-					       (is-push-instr?  (caddr xs))
-					       (is-number?      (cadddr xs))
-					       (is-binop-instr? (cadr (cdddr xs)))))
+		     (list 5 (lambda (xs) (matches (list is-push-instr?
+							 is-number?
+							 is-push-instr?
+							 is-number?
+							 is-binop-instr?) xs))
 			   (lambda (xs ys)
 			     (let ((n0 (cdr (cadr xs)))
 				   (n1 (cdr (cadddr xs)))
@@ -437,18 +468,39 @@
 			       (append
 				(list (cons tag-instruction ins-push)
 				      (cons tag-number
-					    ((cdr (assoc op (list (cons ins-add +)
-								 (cons ins-sub -)
-								 (cons ins-eq  =)
-								 (cons ins-lt <)
-								 (cons ins-mul *)
-								 (cons ins-div quotient)
-								 (cons ins-mod remainder)
-								 (cons ins-shl ash)
-								 (cons ins-shr (lambda (a b) (ash a (- 0 b))))
-								 (cons ins-bor logior)
-								 (cons ins-band logand)))) n0 n1)))
-				ys)))))))
+					    ((cdr (assoc op inliners)) n0 n1)))
+				ys))))
+		     ;; accessing two local variables in a row
+		     ;; (RDRR PUSH n0 LOAD PUSH x    LOAD RDRR PUSH n0 LOAD) ->
+		     ;; (RDRR PUSH n0 LOAD DUP  PUSH x    LOAD SWAP)
+		     (list 11 (lambda (xs)
+				(matches (list is-rdrr-instr?
+					       is-push-instr?
+					       (lambda (x) (and (is-number? x)
+								(= (cdr x) 0)))
+					       is-load-instr?
+					       is-push-instr?
+					       is-number?
+					       is-load-instr?
+					       is-rdrr-instr?
+					       is-push-instr?
+					       (lambda (x) (and (is-number? x)
+								(= (cdr x) 0)))
+					       is-load-instr?) xs))
+			   (lambda (xs ys) (let ((off (car (cddr (cdddr xs)))))
+					     (append
+					      (list (mkinstr ins-rdrr)
+						   (mkinstr ins-push)
+						   (mknum 0)
+						   (mkinstr ins-load)
+						   (mkinstr ins-dup)
+						   (mkinstr ins-push)
+						   off
+						   (mkinstr ins-load)
+						   (mkinstr ins-swap))
+					      ys)))
+			   ))))
+
     (letrec ((helper 
 	      (lambda (changed bb acc)
 		(if (= (length bb) 0) (cons changed (reverse acc))
