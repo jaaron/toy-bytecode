@@ -68,11 +68,11 @@
    different VM types.  The corresponding packers are defined in the
    interpreter.h header file.
 */
-#define PTR_TARGET(x)        (((unsigned int)x) & PTR_TARGET_MASK)
-#define PTR_SIZE(x)          ((((unsigned int)x) >> PTR_TARGET_BITS) & PTR_SIZE_MASK)
+#define PTR_TARGET(x)        (((uword)x) & PTR_TARGET_MASK)
+#define PTR_SIZE(x)          ((((uword)x) >> PTR_TARGET_BITS) & PTR_SIZE_MASK)
 #define NUM_TO_NATIVE(x)     ((typeof(x))((((int)x) << FLAG_BITS) >> FLAG_BITS))
 #define CHAR_TO_NATIVE(x)    ((char)((x) & 0xff))
-#define CELL_TYPE(x)         (((unsigned int)x) & FLAG_MASK)
+#define CELL_TYPE(x)         (((uword)x) & FLAG_MASK)
 #define IS_NUM(x)            (CELL_TYPE(x) == NUM)
 #define IS_PTR(x)            (CELL_TYPE(x) == PTR)
 #define IS_LCONST(x)         (CELL_TYPE(x) == LCONST)
@@ -590,40 +590,40 @@ static inline void inspector(void){
 int main(int argc, char *argv[])
 {
     /* The long awaited array of instructions! */
-    static long instructions[] = {
-	[I_PUSH]	= (long)&&PUSH,  [I_POP]  = (long)&&POP,
-	[I_SWAP]	= (long)&&SWAP,  [I_DUP]  = (long)&&DUP, 
-	[I_ROT]		= (long)&&ROT,
+    static void* instructions[] = {
+	[I_PUSH]	= &&PUSH,  [I_POP]  = &&POP,
+	[I_SWAP]	= &&SWAP,  [I_DUP]  = &&DUP, 
+	[I_ROT]		= &&ROT,
 
 	/* Control flow */
-	[I_CALL]	= (long)&&CALL,
-	[I_RET]		= (long)&&RET,   [I_JMP]  = (long)&&JMP,  
-	[I_JTRUE]	= (long)&&JTRUE, [I_END]  = (long)&&END,
+	[I_CALL]	= &&CALL,
+	[I_RET]		= &&RET,   [I_JMP]  = &&JMP,  
+	[I_JTRUE]	= &&JTRUE, [I_END]  = &&END,
     
 	/* Arithmetic */
-	[I_ADD] 	= (long)&&PLUS,  [I_MUL]  = (long)&&MUL, 
-	[I_SUB]		= (long)&&SUB,   [I_DIV]  = (long)&&DIV,
-	[I_MOD]		= (long)&&MOD,   [I_SHL]  = (long)&&SHL,  
-	[I_SHR]		= (long)&&SHR,   [I_BOR]  = (long)&&BOR,  
-	[I_BAND]	= (long)&&BAND,
+	[I_ADD] 	= &&PLUS,  [I_MUL]  = &&MUL, 
+	[I_SUB]		= &&SUB,   [I_DIV]  = &&DIV,
+	[I_MOD]		= &&MOD,   [I_SHL]  = &&SHL,  
+	[I_SHR]		= &&SHR,   [I_BOR]  = &&BOR,  
+	[I_BAND]	= &&BAND,
     
 	/* Comparison */
-	[I_EQ]		= (long)&&EQ,    [I_LT]   = (long)&&LT,
+	[I_EQ]		= &&EQ,    [I_LT]   = &&LT,
 
 	/* Reading and writing memory */
-	[I_STOR]	= (long)&&STOR,  [I_LOAD] = (long)&&LOAD, [I_ALOC] = (long)&&ALOC,
+	[I_STOR]	= &&STOR,  [I_LOAD] = &&LOAD, [I_ALOC] = &&ALOC,
     
 	/* I/0 */
-	[I_GETC]	= (long)&&GETC,  [I_DUMP] = (long)&&DUMP, 
-	[I_PINT]	= (long)&&PINT,  [I_PCHR] = (long)&&PCHR,
+	[I_GETC]	= &&GETC,  [I_DUMP] = &&DUMP, 
+	[I_PINT]	= &&PINT,  [I_PCHR] = &&PCHR,
 
 	/* Root Register manipulation */
-	[I_RDRR]	= (long)&&RDRR,  [I_WTRR] = (long)&&WTRR,
+	[I_RDRR]	= &&RDRR,  [I_WTRR] = &&WTRR,
 
 	/* Type checking */
-	[I_ISNUM]	= (long)&&ISNUM, [I_ISLCONST] = (long)&&ISLCONST,
-	[I_ISPTR]	= (long)&&ISPTR, [I_ISBOOL]   = (long)&&ISBOOL,
-	[I_ISCHR]	= (long)&&ISCHR, [I_ISINS]    = (long)&&ISINS
+	[I_ISNUM]	= &&ISNUM, [I_ISLCONST] = &&ISLCONST,
+	[I_ISPTR]	= &&ISPTR, [I_ISBOOL]   = &&ISBOOL,
+	[I_ISCHR]	= &&ISCHR, [I_ISINS]    = &&ISINS
     };
 
   /* We first do some basic startup stuff to load the program */
