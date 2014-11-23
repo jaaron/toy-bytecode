@@ -28,6 +28,8 @@
 (define cdar            (lambda (l) (cdr (car l))))
 (define cddr            (lambda (l) (cdr (cdr l))))
 (define caddr           (lambda (l) (car (cddr l))))
+(define cdddr           (lambda (l) (cdr (cddr l))))
+(define cadddr          (lambda (l) (car (cdddr l))))
 (define >=              (lambda (n1 n2) (if (= n2 n1) #t (< n2 n1))))
 (define char<=?         (lambda (c1 c2) (if (char=? c1 c2) #t (char<? c1 c2))))
 (define char>?          (lambda (c1 c2) (char<? c2 c1)))
@@ -180,4 +182,9 @@
 	      (if (< 0 n) 
 		  (number->string-helper n nil)
 		  (string-append "-" (number->string-helper (* n -1) nil))))))
-    
+
+(define assoc
+  (lambda (key alist)
+    (if (null? alist) #f
+	(if (string=? key (caar alist)) (car alist)
+	    (assoc key (cdr alist))))))

@@ -65,18 +65,19 @@
 (define ins-wtrr	"WTRR")
 (define ins-isnum	"ISNUM")
 (define ins-isptr	"ISPTR")
+(define ins-shl         "SHL")
+(define ins-shr         "SHR")
+(define ins-mul	        "MUL")
+(define ins-bor     	"BOR")
+(define ins-band	"BAND")
 
 ;; The instructions are all used at most once in the compiler so its
 ;; cheaper to include them as string literals then to clutter up the
 ;; environment with them.
 
-;; (define ins-mul	"MUL")
+
 ;; (define ins-div	"DIV")
 ;; (define ins-mod	"MOD")
-;; (define ins-shl     	"SHL")
-;; (define ins-shr     	"SHR")
-;; (define ins-bor     	"BOR")
-;; (define ins-band	"BAND")
 ;; (define ins-getc	"GETC")
 ;; (define ins-dump	"DUMP")
 ;; (define ins-pint	"PINT")
@@ -148,13 +149,9 @@
 ; search the list of builtin forms for a 
 ; particular form   
 (define find-special
-    (lambda (f) 
-      (letrec ((helper (lambda (ss)
-			 (if (null? ss) #f
-			     (if (string=? f (car (car ss))) 
-				 (cdr (car ss))
-				 (helper (cdr ss)))))))
-	(helper (special-forms)))))
+  (lambda (f)
+    (let ((x (assoc f (special-forms))))
+      (and x (cdr x)))))
 
 ; The top-level-env is a list containing the list of symbols 
 ; defined by the compiler at the top level.
@@ -202,7 +199,12 @@
 	   ("-"		         "subtract")
 	   ("*"		         "multiply")
 	   ("%"		         "modulo")
-	   ("/"		         "divide") 	   
+	   ("/"		         "divide")
+	   ("quotient"           "divide")
+	   ("remainder"          "modulo")
+	   ("ash"                "arithmetic_shift")
+	   ("logior"             "logior")
+	   ("logand"             "logand")
 	   ("print-char"	 "print_char") 
 	   ("print-num"		 "print_num")
 	   ("string?"	         "string_q") 
@@ -357,7 +359,10 @@
 (define u-call-cdr  (lambda () (assembly-cdr))) ; same with cdr.
 
 (define u-call-cons ; cons is really big (13 instructions)! we'll never inline it
-  (lambda () (append-instructions ins-push (asm-label-reference "__u_cons") ins-call)))
+  (lambda () 
+    ;; (assembly-cons)
+    (append-instructions ins-push (asm-label-reference "__u_cons") ins-call)
+    ))
 
 (define u-call-set-car (lambda () (assembly-set-car)))
 (define u-call-set-cdr (lambda () (assembly-set-cdr)))
@@ -1084,7 +1089,43 @@
       (append-instruction "MOD")
       (assembly-funret))
 
-	; equality comparison
+    (let ((shl-label (fresh-label))
+	  (out-label (fresh-label)))
+      (assembly-builtin-header "arithmetic_shift")
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)
+      (append-instructions
+       ins-dup
+       ins-push (asm-number 0)
+       ins-lt
+       ins-push (asm-label-reference shl-label)
+       ins-jtrue
+       ins-push (asm-number -1)
+       ins-mul
+       ins-shr
+       ins-push (asm-label-reference out-label)
+       ins-jmp
+       (asm-label-definition shl-label)
+       ins-shl
+       (asm-label-definition out-label)       
+       )
+      (assembly-funret))
+
+    (begin
+      (assembly-builtin-header "logior")
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)
+      (append-instruction ins-bor)
+      (assembly-funret))
+
+    (begin
+      (assembly-builtin-header "logand")
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)
+      (append-instruction ins-band)
+      (assembly-funret))
+    
+    ; equality comparison
     (begin 
       (assembly-builtin-header "equal")
       (assembly-get-arg 0)
