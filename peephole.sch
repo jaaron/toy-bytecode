@@ -34,6 +34,108 @@
 (define ins-ischr	"ISCHR")
 (define ins-isins	"ISINS")
 
+(define instruction-infos
+  (list
+   ;;    MNEMONIC  BBTERM CONSUMES   DELTA HAS-IMM STACKONLY
+   (list ins-push     #f     0         1    #t      #t)
+   (list ins-pop      #f     1        -1    #f      #t)
+   (list ins-swap     #f     2         0    #f      #t)
+   (list ins-dup      #f     0         1    #f      #t)
+   (list ins-rot      #f     3         0    #f      #t)
+   (list ins-add      #f     2        -1    #f      #t)
+   (list ins-sub      #f     2        -1    #f      #t)
+   (list ins-eq       #f     2        -1    #f      #t)
+   (list ins-lt       #f     2        -1    #f      #t)
+   (list ins-mul      #f     2        -1    #f      #t)
+   (list ins-div      #f     2        -1    #f      #t)
+   (list ins-mod      #f     2        -1    #f      #t)
+   (list ins-shl      #f     2        -1    #f      #t)
+   (list ins-shr      #f     2        -1    #f      #t)
+   (list ins-bor      #f     2        -1    #f      #t)
+   (list ins-band     #f     2        -1    #f      #t)
+   (list ins-getc     #f     0         1    #f      #t)
+   (list ins-dump     #f     0         0    #f      #t)
+   (list ins-pint     #f     0         1    #f      #t)
+   (list ins-pchr     #f     0         1    #f      #t)
+   
+   (list ins-stor     #f     3        -2    #f      #f)
+   (list ins-load     #f     2        -1    #f      #f)
+   (list ins-aloc     #f     1         0    #f      #f)
+   (list ins-rdrr     #f     0         1    #f      #f)
+   (list ins-wtrr     #f     1        -1    #f      #f)
+   (list ins-isnum    #f     1         0    #f      #t)
+   (list ins-isptr    #f     1         0    #f      #t)
+   (list ins-islconst #f     1         0    #f      #t)
+   (list ins-ischr    #f     1         0    #f      #t)
+   (list ins-isins    #f     1         0    #f      #t)
+   
+   (list ins-call    #t)
+   (list ins-ret     #t)
+   (list ins-jmp     #t)
+   (list ins-jtrue   #t)
+   (list ins-end     #t)))
+
+
+(define is-instr?      (lambda (tok) (string=? (car tok) tag-instruction)))
+(define is-number?     (lambda (tok) (string=? (car tok) tag-number)))
+(define is-definition? (lambda (tok) (string=? (car tok) tag-definition)))
+
+(define lookup-instr-info (tok)
+  (assoc (cdr tok) instruction-infos))
+
+(define is-terminal-instr??
+  (lambda (tok)
+    (and (is-instr? tok)
+	 (cadr (lookup-instr-info tok)))))
+
+(define is-push-instr? 
+  (lambda (tok) (and (is-instr? tok)
+		     (string=? (cdr tok) ins-push))))
+
+(define is-pop-instr? 
+  (lambda (tok) (and (is-instr? tok)
+		     (string=? (cdr tok) ins-pop))))
+(define is-swap-instr? 
+  (lambda (tok) (and (is-instr? tok)
+		     (string=? (cdr tok) ins-swap))))
+
+(define is-rdrr-instr? (lambda (tok)
+			 (and (is-instr? tok)
+			      (string=? ins-rdrr (cdr tok)))))
+
+(define is-load-instr? (lambda (tok)
+			 (and (is-instr? tok)
+			      (string=? ins-load (cdr tok)))))
+
+(define is-binop-instr?
+  (lambda (tok) (and (string=? (car tok) tag-instruction)
+		     (or (string=? (cdr tok) ins-add)
+			 (string=? (cdr tok) ins-sub)
+			 (string=? (cdr tok) ins-eq)
+			 (string=? (cdr tok) ins-lt)
+			 (string=? (cdr tok) ins-mul)
+			 (string=? (cdr tok) ins-div)
+			 (string=? (cdr tok) ins-mod)
+			 (string=? (cdr tok) ins-shl)
+			 (string=? (cdr tok) ins-shr)
+			 (string=? (cdr tok) ins-bor)
+			 (string=? (cdr tok) ins-band)
+			 ))))
+
+(define is-stack-only-instr?
+  (lambda (tok)
+    (let ((info (assoc (cdr instr) instruction-infos)))
+      (and (is-instr? tok)
+	   (not    (cadr info))
+	   (cadddr (cddr info))))))
+
+(define instr-has-immediate?
+  (lambda (ins)
+    (let ((info (assoc (cdr instr) instruction-infos)))
+      (and (is-instr? tok)
+	   (not   (cadr info))
+	   (caddr (cddr info))))))
+
 (define tag-instruction "instruction")
 (define tag-number      "number")
 (define tag-pointer     "pointer")
@@ -329,77 +431,18 @@
 		       (newline)
 		       (print-basic-block (cdr l))))))
 
-(define is-jmp-instruction?
-  (lambda (tok)
-    (and (string=? (car tok) tag-instruction)
-	 (let ((val (cdr tok)))
-	   (or (string=? val ins-jmp)
-	       (string=? val ins-jtrue)
-	       (string=? val ins-call)
-	       (string=? val ins-ret)
-	       (string=? val ins-end))))))
-
-(define is-mem-instr?
-  (lambda (tok)
-    (and (string=? (car tok) tag-instruction)
-	 (let ((val (cdr tok)))
-	   (or (string=? val ins-aloc)
-	       (string=? val ins-stor))))))
-
-(define is-side-effecting-instr?
-  (lambda (tok)
-    (and (string=? (car tok) tag-instruction)
-	 (let ((val (cdr tok)))
-	   (or (string=? val ins-aloc)
-	       (string=? val ins-stor))))))
-
-(define is-number? (lambda (tok) (string=? (car tok) tag-number)))
-
-(define ins-has-immediate?
-  (lambda (ins)
-    (and (string=? (car ins) tag-instruction)
-	 (string=? (cdr ins) ins-push))))
-
-(define is-definition?
-  (lambda (tok)
-    (string=? (car tok) tag-definition)))
-
 (define asm-read-basic-block 
   (lambda ()
     (letrec ((helper (lambda (acc)
 		       (let ((tok (asm-next-token)))
 			 (if (not tok) 
 			     (reverse acc)
-			     (if (or (is-jmp-instruction? tok)
+			     (if (or (is-terminal-instr? tok)
 				     (is-definition? tok))
 				 (reverse (cons tok acc))
 				 (helper (cons tok acc))))))))
       (helper '()))))
 
-(define is-push-instr? 
-  (lambda (tok) (and (string=? (car tok) tag-instruction)
-		     (string=? (cdr tok) ins-push))))
-(define is-pop-instr? 
-  (lambda (tok) (and (string=? (car tok) tag-instruction)
-		     (string=? (cdr tok) ins-pop))))
-(define is-swap-instr? 
-  (lambda (tok) (and (string=? (car tok) tag-instruction)
-		     (string=? (cdr tok) ins-swap))))
-
-(define is-binop-instr?
-  (lambda (tok) (and (string=? (car tok) tag-instruction)
-		     (or (string=? (cdr tok) ins-add)
-			 (string=? (cdr tok) ins-sub)
-			 (string=? (cdr tok) ins-eq)
-			 (string=? (cdr tok) ins-lt)
-			 (string=? (cdr tok) ins-mul)
-			 (string=? (cdr tok) ins-div)
-			 (string=? (cdr tok) ins-mod)
-			 (string=? (cdr tok) ins-shl)
-			 (string=? (cdr tok) ins-shr)
-			 (string=? (cdr tok) ins-bor)
-			 (string=? (cdr tok) ins-band)
-			 ))))
 			 
 (define split
   (letrec ((helper (lambda (l n a)
@@ -407,7 +450,7 @@
 			 (helper (cdr l) (- n 1) (cons (car l) a))))))
     (lambda (l n) (helper l n '()))))
 
-(define fold            (lambda (f s l) (if (null? l) s (fold f (f s (car l)) (cdr l)))))
+(define fold (lambda (f s l) (if (null? l) s (fold f (f s (car l)) (cdr l)))))
 
 (define matches
   (lambda (pat seq)
@@ -432,13 +475,12 @@
 	(cons ins-bor logior)
 	(cons ins-band logand)))
 
-(define is-rdrr-instr? (lambda (tok)
-			 (and (string=? tag-instruction (car tok) )
-			      (string=? ins-rdrr (cdr tok)))))
-
-(define is-load-instr? (lambda (tok)
-			 (and (string=? tag-instruction (car tok) )
-			      (string=? ins-load (cdr tok)))))
+(define find-consumer
+  (letrec ((helper (lambda (bb depth)
+		     (if (null? bb) '()
+			 (if (> (consumption-depth (car bb)) depth) bb
+			     (helper (cdr bb) (+ depth (stack-delta (car bb)))))))))
+    (lambda (bb) (helper bb 0))))			    
 
 (define peephole 
   (let ((optimizers (list
