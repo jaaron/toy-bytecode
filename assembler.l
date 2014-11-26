@@ -245,7 +245,7 @@ int main(int argc, char *argv[])
 {
   int failure = 0;
   int i;
-  int output_filedes = argc > 1 ? open(argv[1], O_WRONLY | O_CREAT) : STDOUT_FILENO;
+  int output_filedes = argc > 1 ? open(argv[1], O_WRONLY | O_CREAT, 0644) : STDOUT_FILENO;
   if(output_filedes < 0){
     fprintf(stderr, "Failed to open output file.  Dying\n");
     exit(1);
@@ -263,7 +263,11 @@ int main(int argc, char *argv[])
     fprintf(stderr, "Dying From Failure\n");
     exit(1);
   }
-  write(output_filedes, out_buffer, words*sizeof(word));
+  if(write(output_filedes, out_buffer, words*sizeof(word)) < words*sizeof(word)){
+      fprintf(stderr, "Error while writing!\n");
+      close(output_filedes);
+      return 1;
+  }
   fprintf(stderr, "Read %d lines. Wrote %u words\n", __line_number, words);
   close(output_filedes);
   return 0;

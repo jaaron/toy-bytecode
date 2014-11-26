@@ -636,7 +636,7 @@ int main(int argc, char *argv[])
     exit(1);
   }
   /* read in as much as we can! */
-  nread      = read(fd, memory, MEM_SIZE*sizeof(long));
+  nread      = read(fd, memory, MEM_SIZE*sizeof(word));
   if(nread < 0){
     printf("Read failed\n");
     exit(1);
