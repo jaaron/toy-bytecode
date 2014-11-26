@@ -308,7 +308,7 @@ static inline void print_cell(FILE *stream, word c){
    do the allocation, we crash.
 */
 #define HEAP_CHECK(n) do{					\
-    long __tmp = n;						\
+    word __tmp = n;						\
     if(unlikely(hp + __tmp >= heap_base + heap_size)){		\
       heap_base = (heap_base == prog_end ?			\
 		   upper_heap : prog_end);			\
