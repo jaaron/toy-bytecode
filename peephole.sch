@@ -80,8 +80,9 @@
 (define is-number?     (lambda (tok) (string=? (car tok) tag-number)))
 (define is-definition? (lambda (tok) (string=? (car tok) tag-definition)))
 
-(define lookup-instr-info (tok)
-  (assoc (cdr tok) instruction-infos))
+(define lookup-instr-info
+  (lambda (tok)
+    (assoc (cdr tok) instruction-infos)))
 
 (define is-terminal-instr??
   (lambda (tok)
