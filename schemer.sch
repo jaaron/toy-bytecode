@@ -709,11 +709,11 @@
 (define compile-let-bindings
   (lambda (bs env)
     (if (null? bs)  #f
-	(let ((r2 (compile-sexp (car (cdr (car bs))) env #t))
-	      (r1 (compile-let-bindings (cdr bs) env)))
-	  (lambda ()
-	    (do-compile-task r1)
-	    (do-compile-task r2))))))
+	(let ((r2 (compile-sexp (car (cdr (car bs))) env #t)))
+	  (let ((r1 (compile-let-bindings (cdr bs) env)))
+	    (lambda ()
+	      (do-compile-task r1)
+	      (do-compile-task r2)))))))
 
 (define compile-let
   (lambda (l env rest)
@@ -887,14 +887,13 @@
 (define compile-quoted-sexp
   (lambda (s env rest)
     (if (pair? s)
-	(let ((r2 (compile-quoted-sexp (car s) env #t))
-	      (r1 (compile-quoted-sexp (cdr s) env #t))
-	      )
-	  (u-call-cons)
-	  (lambda () 
-	    (do-compile-task r1) 
-	    (do-compile-task r2) 
-	    #f))
+	(let ((r2 (compile-quoted-sexp (car s) env #t)))
+	  (let ((r1 (compile-quoted-sexp (cdr s) env #t)))
+	    (u-call-cons)
+	    (lambda () 
+	      (do-compile-task r1) 
+	      (do-compile-task r2) 
+	      #f)))
 	(if (null? s)
 	    (begin 
 	      (assembly-nil)
@@ -909,27 +908,27 @@
   (lambda (n l env)
     (if (null? l) 
 	(assembly-make-args n)
-	(let ((r2 (compile-sexp (car l) env #t))
-	      (r1 (compile-arguments n (cdr l) env)))
-	  (lambda () 
-	    (do-compile-task r1)
-	    (do-compile-task r2)
-	    )))))
+	(let ((r2 (compile-sexp (car l) env #t)))
+	  (let ((r1 (compile-arguments n (cdr l) env)))
+	    (lambda () 
+	      (do-compile-task r1)
+	      (do-compile-task r2)
+	      ))))))
 
 (define compile-list
   (lambda (l env rest)
     (let ((s (find-special (car l))))
       (if s 
 	  (s l env rest)
-	  (let ((r1 (compile-arguments (length (cdr l)) (cdr l) env))
-		(r2 (compile-sexp (car l) env #t)))	   	    
-	    (if rest
-		(u-call-funcall)
-		(u-call-tailcall)
-		)
-	    (lambda ()
-	      (do-compile-task r1)
-	      (do-compile-task r2)))))))
+	  (let ((r1 (compile-arguments (length (cdr l)) (cdr l) env)))
+	    (let ((r2 (compile-sexp (car l) env #t)))
+	      (if rest
+		  (u-call-funcall)
+		  (u-call-tailcall)
+		  )
+	      (lambda ()
+		(do-compile-task r1)
+		(do-compile-task r2))))))))
 
 (define compile-sexp 
   (lambda (s env rest)
