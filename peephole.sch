@@ -84,10 +84,18 @@
   (lambda (tok)
     (assoc (cdr tok) instruction-infos)))
 
-(define is-terminal-instr??
+(define is-terminal-instr?
   (lambda (tok)
     (and (is-instr? tok)
 	 (cadr (lookup-instr-info tok)))))
+
+(define instr-consumption-depth
+  (lambda (tok)
+    (if (is-instr? tok) (caddr (lookup-instr-info tok)) 0)))
+
+(define instr-stack-delta
+  (lambda (tok)
+    (if (is-instr? tok) (cadddr (lookup-instr-info tok)) 0)))
 
 (define is-push-instr? 
   (lambda (tok) (and (is-instr? tok)
@@ -125,14 +133,14 @@
 
 (define is-stack-only-instr?
   (lambda (tok)
-    (let ((info (assoc (cdr instr) instruction-infos)))
+    (let ((info (assoc (cdr tok) instruction-infos)))
       (and (is-instr? tok)
 	   (not    (cadr info))
 	   (cadddr (cddr info))))))
 
 (define instr-has-immediate?
-  (lambda (ins)
-    (let ((info (assoc (cdr instr) instruction-infos)))
+  (lambda (tok)
+    (let ((info (assoc (cdr tok) instruction-infos)))
       (and (is-instr? tok)
 	   (not   (cadr info))
 	   (caddr (cddr info))))))
@@ -144,6 +152,7 @@
 (define tag-lang-const  "lang-const")
 (define tag-string      "string")
 (define tag-char        "char")
+(define tag-eof         "eof")
 (define tag-definition  "definition")
 (define tag-reference   "reference")
 
@@ -334,7 +343,15 @@
 			   (helper (cons c acc) (read-char))
 			   (cons (reverse acc) c)))))
       (let ((i (helper (list c) (read-char))))
-	(cons (cons tag-instruction (list->string (car i))) (cdr i))))))
+	(let ((str (list->string (car i))))	  	      
+	  (cons (if (string=? "FALSE" str)
+		    (cons tag-vm-const #f)
+		    (if (string=? "TRUE" str)
+			(cons tag-vm-const #t)
+			(if (string=? "EOF" str)
+			    (cons tag-eof '())
+			    (cons tag-instruction str))))
+		(cdr i)))))))
  
 (define asm-reader-state-entrance 
   (lambda (c)
@@ -393,37 +410,41 @@
   (lambda (asm-tok)
     (let ((typ (car asm-tok))
 	  (val (cdr asm-tok)))
-      (if (string=? typ "number")
+      (if (string=? typ tag-number)
       	  (begin
       	    (display #\n)
       	    (display val))
-      	  (if (string=? typ "vm-const")
-      	      (begin (display #\v) (display val))
-      	      (if (string=? typ "lang-const")
-      		  (begin (display #\l) (display val))
-      		  (if (string=? typ "pointer")
-      		      (begin
-      			(display #\p)
-      			(display (car val))
-      			(display #\,)
-      			(display (cdr val)))
-      		      (if (string=? typ "string")
-      			  (begin (display #\") (display val) (display #\"))
-			  (if (string=? typ "char")
-			      (display-char-asm val)
-			      (if (string=? typ "reference")
-				  (begin (display #\@) (display val))
-				  (if (string=? typ "definition")
-				      (begin (display #\:) 
-					     (display (car val))
-					     (if (not (null? (cdr val)))
-						 (begin (display #\,) (display (cdr val))) #f))
-				      (if (string=? typ "instruction")
-					  (display val)
-					  (begin
-					    (display "Unknown token type: ") 
-					    (display typ)
-					    (quit))))))))))))))
+      	  (if (string=? typ tag-vm-const)
+      	      (if (equal? val #t) (display "FALSE")
+		  (if (equal? val #f) (display "TRUE")
+		      (begin (display #\v) (display val))))
+	      (if (string=? typ tag-eof)
+		  (display "EOF")
+		  (if (string=? typ tag-lang-const)
+		      (begin (display #\l) (display val))
+		      (if (string=? typ "pointer")
+			  (begin
+			    (display #\p)
+			    (display (car val))
+			    (display #\,)
+			    (display (cdr val)))
+			  (if (string=? typ "string")
+			      (begin (display #\") (display val) (display #\"))
+			      (if (string=? typ "char")
+				  (display-char-asm val)
+				  (if (string=? typ "reference")
+				      (begin (display #\@) (display val))
+				      (if (string=? typ "definition")
+					  (begin (display #\:) 
+						 (display (car val))
+						 (if (not (null? (cdr val)))
+						     (begin (display #\,) (display (cdr val))) #f))
+					  (if (string=? typ "instruction")
+					      (display val)
+					      (begin
+						(display "Unknown token type: ") 
+						(display typ)
+						(quit)))))))))))))))
 
 (define print-basic-block 
   (lambda (l)
@@ -479,8 +500,8 @@
 (define find-consumer
   (letrec ((helper (lambda (bb depth)
 		     (if (null? bb) '()
-			 (if (> (consumption-depth (car bb)) depth) bb
-			     (helper (cdr bb) (+ depth (stack-delta (car bb)))))))))
+			 (if (< (instr-consumption-depth (car bb))  depth) bb
+			     (helper (cdr bb) (+ depth (instr-stack-delta (car bb)))))))))
     (lambda (bb) (helper bb 0))))			    
 
 (define peephole 
