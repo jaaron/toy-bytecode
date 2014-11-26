@@ -865,24 +865,24 @@
 	      (conditional (car (cdr l)))
 	      (true-case  (car (cdr (cdr l))))
 	      (false-case (car (cdr (cdr (cdr l))))))
-	  (let ((r1 (compile-sexp conditional env #t))
-		(x  (append-instructions 
-		     ins-push false-value
-		     ins-eq
-		     ins-push (asm-label-reference false-label)
-		     ins-jtrue))
-		(r2 (compile-sexp true-case env rest))
-		(y  (append-instructions ins-push (asm-label-reference join-label) ins-jmp
-					 (asm-label-definition false-label)))
-		(r3 (compile-sexp false-case env rest)))
-	    (append-instruction (asm-label-definition join-label))
-	    (lambda ()
-	      (do-compile-task r1)
-	      (do-compile-task r2)
-	      (do-compile-task r3)
-	      )
-	    )
-	  ))))
+	  (let ((r1 (compile-sexp conditional env #t)))
+	    (append-instructions
+	     ins-push false-value
+	     ins-eq
+	     ins-push (asm-label-reference false-label)
+	     ins-jtrue)
+	    (let ((r2 (compile-sexp true-case env rest)))
+	      (append-instructions ins-push (asm-label-reference join-label) ins-jmp
+				   (asm-label-definition false-label))
+		(let ((r3 (compile-sexp false-case env rest)))
+		  (append-instruction (asm-label-definition join-label))
+		  (lambda ()
+		    (do-compile-task r1)
+		    (do-compile-task r2)
+		    (do-compile-task r3)
+		    )
+		  )
+		))))))
 
 (define compile-quoted-sexp
   (lambda (s env rest)
