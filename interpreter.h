@@ -102,7 +102,14 @@ typedef uint32_t uword;
 #define I_ISCHR    INS(34)
 #define I_ISINS    INS(35)
 
-#define NR_INS 36
+/* Binary I/O */
+#define I_PBIN INS(36)
+/* Binary I/O with type conversion from integer */
+#define I_PBLCONSTI INS(37)
+#define I_PBVCONSTI INS(38)
+#define I_PBPTRI INS(39)
+
+#define NR_INS 40
 
 /* End instructions */
 

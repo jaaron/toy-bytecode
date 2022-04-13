@@ -623,7 +623,12 @@ int main(int argc, char *argv[])
 	/* Type checking */
 	[I_ISNUM]	= &&ISNUM, [I_ISLCONST] = &&ISLCONST,
 	[I_ISPTR]	= &&ISPTR, [I_ISBOOL]   = &&ISBOOL,
-	[I_ISCHR]	= &&ISCHR, [I_ISINS]    = &&ISINS
+	[I_ISCHR]	= &&ISCHR, [I_ISINS]    = &&ISINS,
+
+	[I_PBIN]        = &&PBIN,
+	[I_PBLCONSTI]   = &&PBLCONSTI,
+	[I_PBVCONSTI]   = &&PBVCONSTI,
+	[I_PBPTRI]      = &&PBPTRI
     };
 
   /* We first do some basic startup stuff to load the program */
@@ -894,6 +899,35 @@ int main(int argc, char *argv[])
   INSTRUCTION(ISBOOL,   STACK(0) = (IS_BOOL(STACK(0)))   ? TRUE_VAL : FALSE_VAL);
   INSTRUCTION(ISCHR,    STACK(0) = (IS_CHAR(STACK(0)))   ? TRUE_VAL : FALSE_VAL);
   INSTRUCTION(ISINS,    STACK(0) = (IS_INS(STACK(0)))    ? TRUE_VAL : FALSE_VAL);
+
+  INSTRUCTION(PBIN, do{
+	  word w = htonl(STACK(0));
+	  fwrite(&w, sizeof(w), 1, stdout);
+	  ignore(STACK_POP());
+      }while(0));
+  INSTRUCTION(PBLCONSTI, do{
+	  ASSERT_TYPE(STACK(0), NUM);
+	  word w = htonl(MAKE_LCONST(NUM_TO_NATIVE(STACK(0))));	      
+	  fwrite(&w, sizeof(w), 1, stdout);
+	  ignore(STACK_POP());
+      }while(0));
+  INSTRUCTION(PBVCONSTI, do{
+	  ASSERT_TYPE(STACK(0), NUM);
+	  word w = htonl(MAKE_VCONST(NUM_TO_NATIVE(STACK(0))));	      
+	  fwrite(&w, sizeof(w), 1, stdout);
+	  ignore(STACK_POP());
+      }while(0));
+  INSTRUCTION(PBPTRI, do{
+	  ASSERT_TYPE(STACK(0), NUM);
+	  ASSERT_TYPE(STACK(1), NUM);
+	  word base = NUM_TO_NATIVE(STACK(0));
+	  word size = NUM_TO_NATIVE(STACK(1));
+	  word ptr  = htonl(MAKE_PTR(base, size));
+	  fwrite(&ptr, sizeof(ptr), 1, stdout);
+	  ignore(STACK_POP());
+	  ignore(STACK_POP());
+      }while(0));
+      
   return 0;
 }
   
