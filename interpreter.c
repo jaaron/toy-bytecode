@@ -841,6 +841,7 @@ int main(int argc, char *argv[])
 	 NUM_TO_NATIVE(STACK(0)) >= PTR_SIZE(STACK(1))){
 	fprintf(stderr, "Invalid store: offset %"PRId32" out of bounds\n",
 		NUM_TO_NATIVE(STACK(0)));
+	DO_DUMP(stderr);
 	exit(1);
       }
       memory[PTR_TARGET(STACK(1)) + NUM_TO_NATIVE(STACK(0))] = STACK(2);
@@ -857,6 +858,7 @@ int main(int argc, char *argv[])
 	 NUM_TO_NATIVE(STACK(0)) > PTR_SIZE(STACK(1))){
 	fprintf(stderr, "Invalid load: offset %"PRId32" out of bounds\n", 
 		NUM_TO_NATIVE(STACK(0)));
+	DO_DUMP(stderr);
 	exit(1);
       }
       STACK(1) = memory[PTR_TARGET(STACK(1)) + NUM_TO_NATIVE(STACK(0))];
