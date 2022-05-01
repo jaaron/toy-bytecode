@@ -226,7 +226,12 @@
 	   ("vapply"             "vapply")
 	   ("char=?"		 "equal")     ;; for characters
 	   ("char<?"		 "less_than") ;; for characters
-	   ("eof-object?"	 "eof_object_q")))))
+	   ("eof-object?"	 "eof_object_q")
+	   ("print-binary"       "print_binary")
+	   ("print-lconst"       "print_lconst")
+	   ("print-vconst"       "print_vconst")
+	   ("print-pointer"      "print_pointer")
+	   ))))
 
 (define top-level-env-endptr  (last (car top-level-env)))
 
@@ -1377,7 +1382,36 @@
       (assembly-get-arg 0)
       (append-instructions
        ins-push "EOF" ins-eq)
-      (assembly-funret))))
+      (assembly-funret))
+
+    (begin
+      (assembly-builtin-header "print_binary")
+      (assembly-get-arg 0)
+      (append-instructions "PBIN")
+      (assembly-funret)
+      )
+
+    (begin
+      (assembly-builtin-header "print_lconst")
+      (assembly-get-arg 0)
+      (append-instructions "PBLCONSTI")
+      (assembly-funret)
+      )
+    
+    (begin
+      (assembly-builtin-header "print_vconst")
+      (assembly-get-arg 0)
+      (append-instructions "PBVCONSTI")
+      (assembly-funret)
+      )
+    
+    (begin
+      (assembly-builtin-header "print_pointer")
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)
+      (append-instructions "PBPTRI")
+      )
+    ))
 	   
 
 ; compiler-run is the entry point into the compilation system.
