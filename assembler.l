@@ -170,6 +170,11 @@ ISCHR    {out_buffer[words++] = PACK_VM_CONST(I_ISCHR);}
 ISBOOL   {out_buffer[words++] = PACK_VM_CONST(I_ISBOOL);}
 ISINS    {out_buffer[words++] = PACK_VM_CONST(I_ISINS);}
 
+PBIN       {out_buffer[words++] = PACK_VM_CONST(I_PBIN);}
+PBLCONSTI  {out_buffer[words++] = PACK_VM_CONST(I_PBLCONSTI);}
+PBVCONSTI {out_buffer[words++] = PACK_VM_CONST(I_PBVCONSTI);}
+PBPTRI     {out_buffer[words++] = PACK_VM_CONST(I_PBPTRI);}
+
 TRUE     {out_buffer[words++] = PACK_VM_CONST(TRUE_VAL);}
 FALSE    {out_buffer[words++] = PACK_VM_CONST(FALSE_VAL);}
 EOF      {out_buffer[words++] = PACK_CHAR(EOF);}
