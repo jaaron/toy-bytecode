@@ -1360,31 +1360,6 @@
        ins-jmp))
 
     (begin
-      (assembly-builtin-header "vector_ref")
-      (assembly-get-arg 0)
-      (assembly-get-arg 1)
-      (append-instructions 
-       ins-push vector-elems-offset
-	     ins-add
-	     ins-load)
-      (assembly-funret)) 			    
-    
-    (begin 
-      (assembly-builtin-header "vapply")
-      (assembly-get-arg 1)
-      (assembly-get-arg 0)) ; fall thru into tailcall    
-    (assembly-tailcall)     ; do not move the definition of tailcall!!
-
-    (assembly-funcall)
-
-    (begin 
-      (assembly-builtin-header "eof_object_q")
-      (assembly-get-arg 0)
-      (append-instructions
-       ins-push "EOF" ins-eq)
-      (assembly-funret))
-
-    (begin
       (assembly-builtin-header "print_binary")
       (assembly-get-arg 0)
       (append-instructions "PBIN")
@@ -1410,7 +1385,34 @@
       (assembly-get-arg 0)
       (assembly-get-arg 1)
       (append-instructions "PBPTRI")
+      (assembly-funret)
       )
+
+    (begin
+      (assembly-builtin-header "vector_ref")
+      (assembly-get-arg 0)
+      (assembly-get-arg 1)
+      (append-instructions 
+       ins-push vector-elems-offset
+	     ins-add
+	     ins-load)
+      (assembly-funret))	    
+
+    (begin
+      (assembly-builtin-header "vapply")
+      (assembly-get-arg 1)
+      (assembly-get-arg 0)) ; fall thru into tailcall
+    (assembly-tailcall)     ; do not move the definition of tailcall!!
+
+    (assembly-funcall)
+
+    (begin
+      (assembly-builtin-header "eof_object_q")
+      (assembly-get-arg 0)
+      (append-instructions
+       ins-push "EOF" ins-eq)
+      (assembly-funret))
+
     ))
 	   
 
@@ -1431,7 +1433,6 @@
 	  (begin
 	    (append-instruction ins-end))))))
 
-
 ; Into the reader.  
 ;
 ; The reader is pretty simple.  
@@ -1442,10 +1443,12 @@
 ; read-list reads sexps until the returned 'next-char' is a close peren, 
 ; then returns the list read, and the next non-whitespace character.
 ; reader utility functions
-(define is-space?     (lambda (c) (if (eof-object? c) #t
-				      (if (char=? c #\space) #t
-					  (if (char=? c #\tab) #t
-					      (if (char=? c #\newline) #t #f))))))
+(define is-space?
+  (lambda (c) (if (eof-object? c) #t
+		  (if (char=? c #\space) #t
+		      (if (char=? c #\tab) #t
+			  (if (char=? c #\newline) #t #f))))))
+
 (define is-delimiter? (lambda (c) (if (is-space? c) #t
 				      (if (char=? c #\() #t
 					  (if (char=? c #\)) #t
@@ -1609,7 +1612,6 @@
 	    (if (string=? x ".")
 		(read-dotted-cdr)
 		(cons (parse-token x) (read-list))))))))
-
 
 (define read-sexp
   (lambda () (parse-token (next-token))))
