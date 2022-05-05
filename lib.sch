@@ -171,24 +171,6 @@
 					      (display "' is not a digit!\n")
 					      (quit))))))))))))))
 
-(define char->digit
-  (lambda (d)
-    (if (char=? d #\0) 0
-	(if (char=? d #\1) 1
-	    (if (char=? d #\2) 2
-		(if (char=? d #\3 ) 3
-		    (if (char=? d #\4) 4
-			(if (char=? d #\5) 5
-			    (if (char=? d #\6) 6
-				(if (char=? d #\7) 7
-				    (if (char=? d #\8) 8
-					(if (char=? d #\9 ) 9
-					    (begin 
-					      (display "Error: '")
-					      (display d)
-					      (display "' is not a digit!\n")
-					      (quit))))))))))))))
-    
 (define number->string-helper
   (lambda (n rest)
     (if (= n 0)
@@ -201,12 +183,6 @@
 	      (if (< 0 n) 
 		  (number->string-helper n nil)
 		  (string-append "-" (number->string-helper (* n -1) nil))))))
-
-(define string->number
-  (lambda (s)
-    (string-fold
-     (lambda (n c)
-       (+ (* n 10) (char->digit c))))))
 
 (define assoc
   (lambda (key alist)
