@@ -1362,29 +1362,33 @@
     (begin
       (assembly-builtin-header "print_binary")
       (assembly-get-arg 0)
-      (append-instructions "PBIN")
+      (append-instructions "PBIN"
+			   ins-push (asm-number 0))
       (assembly-funret)
       )
 
     (begin
       (assembly-builtin-header "print_lconst")
       (assembly-get-arg 0)
-      (append-instructions "PBLCONSTI")
+      (append-instructions "PBLCONSTI"
+			   ins-push (asm-number 0))
       (assembly-funret)
       )
     
     (begin
       (assembly-builtin-header "print_vconst")
       (assembly-get-arg 0)
-      (append-instructions "PBVCONSTI")
+      (append-instructions "PBVCONSTI"
+			   ins-push (asm-number 0))
       (assembly-funret)
       )
     
     (begin
       (assembly-builtin-header "print_pointer")
-      (assembly-get-arg 0)
       (assembly-get-arg 1)
-      (append-instructions "PBPTRI")
+      (assembly-get-arg 0)
+      (append-instructions "PBPTRI"
+			   ins-push (asm-number 0))
       (assembly-funret)
       )
 
