@@ -1356,7 +1356,7 @@
       (append-instruction (asm-label-definition "__make_string_two_args"))	; (s)
       (assembly-set-arg 0)
       (append-instructions 
-       ins-push (asm-label-reference "vector_fill")
+       ins-push (asm-label-reference "__vector_fill")
        ins-jmp))
 
     (begin
