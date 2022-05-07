@@ -158,7 +158,7 @@
       (let ((x (if (char=? c #\n) #\newline
 		   (if (char=? c #\t) #\tab
 		       c))))
-	(list->string (list #\' c #\'))))))
+	(list->string (list #\' x #\'))))))
 
 (define read-char-literal
   (lambda ()
