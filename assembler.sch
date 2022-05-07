@@ -41,11 +41,13 @@
 				 (cons "TRUE"          128)
 				 (cons "FALSE"         129)))
 
-(define append-vm-constant print-vconst)
-(define append-language-constant    print-lconst)
-(define append-number      print-binary)
-(define append-pointer     print-pointer)
-(define append-character print-vconst)
+(define append-vm-constant (lambda (x) (print-vconst x)))
+(define append-language-constant    (lambda (x) (print-lconst x)))
+(define append-number      (lambda (x) (print-binary x)))
+(define append-pointer     (lambda (x sz) (print-pointer x sz)))
+(define append-character   (lambda (x) (print-binary x)))
+(define append-string      (lambda (x) (string-fold (lambda (c acc) (append-character c)) #f x 0 (string-length x))))
+(define append-eof-char    (lambda () (print-vconst (logior 8388608 255))))
 
 (define make-label-definition
   (lambda (ins pc)
@@ -59,7 +61,7 @@
 		  (string->number (substring ins (+ comma 1) (string-length ins))))
 	    (list (substring ins 1 (string-length ins)) pc 0))))))
 
-(define append-label-definition
+(define append-label-reference
   (lambda (ref labels)
     (let ((tuple (assoc ref labels)))
       (let ((loc   (cadr  tuple))
@@ -86,31 +88,37 @@
 
 (define string->number
   (lambda (s)
-    (string-fold
-     (lambda (c n)
-       (+ (* n 10) (char->digit c))) 0 s 0 (string-length s))))
+    (let ((helper (lambda (s)
+		    (string-fold
+		     (lambda (c n)
+		       (+ (* n 10) (char->digit c))) 0 s 0 (string-length s)))))	  
+      (if (char=? (string-ref s 0) #\-)
+	  (* -1 (helper (substring s 1 (string-length s))))
+	  (helper s)))))
 
 (define assemble-instruction 
   (lambda (ins pc labels)
-    (display "assemble-instruction ")(display ins)(display "\n")
     (let ((c (string-ref ins 0)))
-      (if (char=? c #\")
-	  (append-character (string-ref ins 1))
-	  (if (char=? c #\n)
-	      (append-number (string->number (substring ins 1 (string-length ins))))
-	      (if (char=? c #\l)
-		  (append-language-constant (string->number (substring ins 1 (string-length ins))))
-		  (if (char=? c #\@)
-		      (append-label-definition ins labels)		  
-		      (append-vm-constant (cdr (assoc ins vm-constants-alist)))
-		      )))))))
+      (if (string=? ins "EOF")
+	  (append-eof-char)
+	  (if (char=? c #\')
+	      (append-character (string-ref ins 1))
+	      (if (char=? c #\")
+		  (append-string (substring ins 1 (string-length ins)))
+		  (if (char=? c #\n)
+		      (append-number (string->number (substring ins 1 (string-length ins))))
+		      (if (char=? c #\l)
+			  (append-language-constant (string->number (substring ins 1 (string-length ins))))
+			  (if (char=? c #\@)
+			      (append-label-reference (substring ins 1 (string-length ins)) labels)
+			      (append-vm-constant (cdr (assoc ins vm-constants-alist))))))))))))
 
 (define assemble-instructions
   (lambda (instrs pc labels)
     (if (null? instrs) #t
 	(begin
 	  (assemble-instruction (car instrs) pc labels)
-	  (assemble-instructions (cdr instrs (+ pc 1) labels))))))
+	  (assemble-instructions (cdr instrs) (+ pc 1) labels)))))
 
 (define discard-to-nl (lambda () (let ((r (read-char)))
 				   (if (char=? r #\newline) #t
@@ -125,6 +133,42 @@
 (define next-non-ws      (lambda ()  (drop-chars-until (lambda (z) (or (eof-object? z)
 								       (not (is-space? z)))))))
 
+
+(define read-string-literal-state-backslash
+  (lambda (acc)
+    (let ((c (read-char)))
+      (read-string-literal
+       (if (char=? c #\n) (cons #\newline acc)
+	   (if (char=? c #\t) (cons #\tab acc)
+	       (cons c acc)))))))
+	      
+(define read-string-literal
+  (lambda (acc)
+    (let ((c (read-char)))
+      (if (char=? c #\\)
+	  (read-string-literal-state-backslash acc)
+	  (if (char=? c #\")
+	      (list->string (reverse acc))
+	      (read-string-literal (cons c acc)))))))
+
+(define read-char-literal-state-backslash
+  (lambda ()
+    (let ((c (read-char))
+	  (closeq (read-char)))
+      (let ((x (if (char=? c #\n) #\newline
+		   (if (char=? c #\t) #\tab
+		       c))))
+	(list->string (list #\' c #\'))))))
+
+(define read-char-literal
+  (lambda ()
+    (let ((c (read-char)))
+      (if (char=? c #\\)
+	  (read-char-literal-state-backslash)
+	  (let ((x (read-char)))
+	    (if (char=? x #\')
+		(list->string (list #\' c #\'))
+		(display "Error: expected '")))))))
 
 (define read-to-ws
   (lambda (c)
@@ -144,16 +188,24 @@
 	      (begin
 		(drop-chars-until (lambda (z) (char=? z #\newline)))
 		(read-assembly instrs pc labels))
-	      (let ((tok (read-to-ws c)))
+	      (let ((tok (if (char=? c #\")
+			     (read-string-literal (list c))
+			     (if (char=? c #\')
+				 (read-char-literal)
+				 (read-to-ws c)))))
 		(if (char=? c #\:)
-		  (let ((lbl   (make-label-definition tok pc)))
-		    (read-assembly instrs pc (cons lbl labels)))
-		  (read-assembly (cons tok instrs) (+ pc 1) labels))))))))
+		    (let ((lbl   (make-label-definition tok pc)))
+		      (read-assembly instrs pc (cons lbl labels)))
+		    (read-assembly (cons tok instrs)
+				   (if (char=? c #\")
+				       (+ pc (- (string-length tok) 1))
+				       (+ pc 1))
+				   labels))))))))
 
 (define assemble
   (lambda ()
     (let ((instrs-labels (read-assembly '() 0 '())))
-      (assemble-instructions (car instrs-labels)
+      (assemble-instructions (car instrs-labels) 0
 			     (cdr instrs-labels)))))
 
 (assemble)
