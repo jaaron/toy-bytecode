@@ -109,7 +109,9 @@ typedef uint32_t uword;
 #define I_PBVCONSTI INS(38)
 #define I_PBPTRI INS(39)
 
-#define NR_INS 40
+#define I_BRK INS(40)
+
+#define NR_INS 41
 
 /* End instructions */
 

@@ -123,6 +123,10 @@ static word  rr = MAKE_NUM(0);         /* the root regiseter can be
 					     pointer to a structure
 					     containing local variables. */
 
+static word callstack[256];
+static word* callstack_top = callstack;
+static int single_step = 0;
+
 /* 
    Access the element at offset x from the top of the stack.  (0 is
    top).
@@ -196,13 +200,17 @@ static inline void print_cell(FILE *stream, word c){
 */
 #define DO_DUMP(stream) do{						\
     int q=0;								\
-    fprintf(stream, "pc: %ld, hp: %ld sp: %p height: %ld\nstack:\n",	\
-	    pc-memory, hp-memory, sp, STACK_HEIGHT());			\
+    fprintf(stream, "pc: %ld, hp: %ld sp: %ld height: %ld\nstack:\n",	\
+	    pc-memory, hp-memory, sp-memory, STACK_HEIGHT());		\
     while(q < STACK_HEIGHT() ){						\
 	fprintf(stderr, "\t");						\
 	print_cell(stderr, STACK(q));					\
 	fprintf(stderr, "\n");						\
 	q++;								\
+    }									\
+    fprintf(stream, "callstack:\n");					\
+    for(q = 0;&callstack[q] < callstack_top;q++){			\
+	fprintf(stderr, "\t%d\n", callstack[q]);			\
     }									\
   }while(0)
 
@@ -261,6 +269,7 @@ static inline void print_cell(FILE *stream, word c){
 */
 #define INSTRUCTION(n,x)			\
   n:						\
+  if(single_step) inspector();			\
   x;						\
   NEXT
 
@@ -550,9 +559,11 @@ void gc(word *new_heap)
 */
 static inline void inspector(void){
     int  cmd;
+    fprintf(stderr, ">> ");
+    fflush(stderr);
     while( ((cmd = getchar()) != '\n')){
 	switch(cmd){
-	case 'c': while(getchar() != '\n'); return;
+	case 'c': while(getchar() != '\n'); single_step = 0; return;
 	case 'p': {
 	    int addr;
 	    scanf("%d", &addr); 
@@ -575,6 +586,15 @@ static inline void inspector(void){
 	    print_cell(stderr, rr);
 	    fprintf(stderr, "\n");
 	} break;
+	case 'd': {
+	    while(getchar()!='\n');
+	    DO_DUMP(stderr);
+	} break;
+	case 'n': {
+	    while(getchar()!='\n');
+	    single_step = 1;
+	    return;
+	}
 	default: while(getchar()!='\n');
 	    fprintf(stderr, 
 		    "Unknown command '%c':\n"
@@ -584,9 +604,17 @@ static inline void inspector(void){
 		    "\tr\tprint root register\n", cmd);
 	    break;
 	}
+	fprintf(stderr, ">> ");
+	fflush(stderr);
     }
 }
 
+#define MAX_BREAKPOINTS 32
+struct breakpoint{
+    word pc;
+    word instr;
+};
+    
 int main(int argc, char *argv[])
 {
     /* The long awaited array of instructions! */
@@ -625,20 +653,60 @@ int main(int argc, char *argv[])
 	[I_ISPTR]	= &&ISPTR, [I_ISBOOL]   = &&ISBOOL,
 	[I_ISCHR]	= &&ISCHR, [I_ISINS]    = &&ISINS,
 
-	[I_PBIN]        = &&PBIN,
+	[I_PBIN]       = &&PBIN,
 	[I_PBLCONSTI]   = &&PBLCONSTI,
 	[I_PBVCONSTI]   = &&PBVCONSTI,
-	[I_PBPTRI]      = &&PBPTRI
+	[I_PBPTRI]      = &&PBPTRI,
+
+	[I_BRK]         = &&BRK
     };
 
   /* We first do some basic startup stuff to load the program */
-  int fd;
-  int nread;  
-  /* Read from a file or stdin */
-  fd = argc > 1 ? open(argv[1], O_RDONLY) : STDIN_FILENO;
+  int fd=-1;
+  FILE *program_input_file=NULL;
+  int nread;
+
+  struct breakpoint breakpoints[MAX_BREAKPOINTS];
+  int nr_breakpoints = 0;
+  int tmp;
+  for(tmp = 1; tmp < argc; tmp++){
+      if(argv[tmp][0] == '-' && argv[tmp][1] == 'b'){
+	  if(nr_breakpoints == MAX_BREAKPOINTS){
+	      fprintf(stderr, "Error: maximum breakpoints exceeded\n");
+	      exit(1);
+	  }
+	  if(argv[tmp][2] != '\0'){
+	      breakpoints[nr_breakpoints].pc = atoi(&argv[tmp][2]);
+	  }else if(tmp + 1 < argc){
+	      tmp++;
+	      breakpoints[nr_breakpoints].pc = atoi(argv[tmp]);
+	  }else{
+	      fprintf(stderr, "Error: -b must be followed by program counter\n");
+	      exit(1);
+	  }
+	  nr_breakpoints++;
+      }else if(fd < 0){
+	  fd = open(argv[tmp], O_RDONLY);
+	  if(fd < 0){
+	      fprintf(stderr, "Failed to open program file '%s'\n", argv[tmp]);
+	      exit(1);
+	  }
+      }else if(program_input_file == NULL){
+	  program_input_file = fopen(argv[tmp], "r");
+	  if(program_input_file == NULL){
+	      fprintf(stderr, "Failed to open program input file '%s'\n", argv[tmp]);
+	      exit(1);
+	  }
+      }else{
+	  fprintf(stderr, "Error: unexpected argument '%s'\n", argv[tmp]);
+	  exit(1);
+      }
+  }
   if(fd < 0){
-    printf("Open failed\n");
-    exit(1);
+      fd = STDIN_FILENO;
+  }
+  if(program_input_file == NULL){
+      program_input_file = stdin;
   }
   /* read in as much as we can! */
   nread      = read(fd, memory, MEM_SIZE*sizeof(word));
@@ -666,6 +734,17 @@ int main(int argc, char *argv[])
     memory[nread-1] = ntohl(memory[nread-1]);
   }
 
+  /*
+    Apply breakpoints, replace program locations specified on the
+    commandline with BRK instructions.
+  */
+  for(tmp = 0;tmp < nr_breakpoints;tmp++){
+      if(breakpoints[tmp].pc < (prog_end - memory)){
+	  breakpoints[tmp].instr = memory[breakpoints[tmp].pc];
+	  memory[breakpoints[tmp].pc] = I_BRK;
+      }
+  }
+  
   /* pc points to the first cell of memory which is the first opcode
      to execute.  All we have to do to kick things off is call the
      NEXT macro to jump to that instruction handler and increment the
@@ -703,6 +782,12 @@ int main(int argc, char *argv[])
 	      do{
 		word tmp = pc - memory;
 		ASSERT_TYPE(STACK(0), PTR);
+		if(callstack_top < &callstack[255]){
+		    *callstack_top = pc - memory;
+		    callstack_top++;
+		    *callstack_top = PTR_TARGET(STACK(0));
+		    callstack_top++;
+		}
 		pc = memory + PTR_TARGET(STACK(0));
 		STACK(0) = MAKE_PTR(tmp,0);
 	      }while(0)
@@ -716,6 +801,10 @@ int main(int argc, char *argv[])
 	      do{
 		ASSERT_TYPE(STACK(1), PTR);
 		pc = memory + PTR_TARGET(STACK(1));
+		if(callstack_top > callstack){
+		    callstack_top--;
+		    callstack_top--;
+		}
 		STACK(1) =  STACK(0);
 		ignore(STACK_POP());
 	      }while(0)
@@ -882,7 +971,7 @@ int main(int argc, char *argv[])
       }while(0));
   
   /* I/O */
-  INSTRUCTION(GETC, STACK_PUSH(MAKE_CHAR(getchar())));
+  INSTRUCTION(GETC, STACK_PUSH(MAKE_CHAR(fgetc(program_input_file))));
   INSTRUCTION(DUMP, DO_DUMP(stdout));
   INSTRUCTION(PINT, ASSERT_TYPE(STACK(0), NUM);    
 	      printf("%"PRId32, NUM_TO_NATIVE(STACK(0))); 
@@ -929,7 +1018,19 @@ int main(int argc, char *argv[])
 	  ignore(STACK_POP());
 	  ignore(STACK_POP());
       }while(0));
-      
+
+  INSTRUCTION(BRK, do{
+	  int brknum;
+	  inspector();
+	  for(brknum = 0; brknum < nr_breakpoints; brknum++){
+	      if(breakpoints[brknum].pc == ((pc-1) - memory)){
+		  goto *instructions[breakpoints[brknum].instr];
+	      }
+	  }
+	  fprintf(stderr, "Error: failed to continue from breakpoint at %ld\n", pc - memory);
+	  DO_DUMP(stderr);
+	  exit(1);
+      }while(0));
   return 0;
 }
   
