@@ -33,6 +33,10 @@
 (define ins-islconst	"ISLCONST")
 (define ins-ischr	"ISCHR")
 (define ins-isins	"ISINS")
+(define ins-pbin        "PBIN")
+(define ins-pblconsti   "PBLCONSTI")
+(define ins-pbvconsti   "PBVCONSTI")
+(define ins-pbptri      "PBPTRI")
 
 (define instruction-infos
   (list
@@ -55,8 +59,8 @@
    (list ins-band     #f     2        -1    #f      #t)
    (list ins-getc     #f     0         1    #f      #t)
    (list ins-dump     #f     0         0    #f      #t)
-   (list ins-pint     #f     0         1    #f      #t)
-   (list ins-pchr     #f     0         1    #f      #t)
+   (list ins-pint     #f     1        -1    #f      #t)
+   (list ins-pchr     #f     1        -1    #f      #t)
    
    (list ins-stor     #f     3        -2    #f      #f)
    (list ins-load     #f     2        -1    #f      #f)
@@ -68,6 +72,10 @@
    (list ins-islconst #f     1         0    #f      #t)
    (list ins-ischr    #f     1         0    #f      #t)
    (list ins-isins    #f     1         0    #f      #t)
+   (list ins-pbin     #f     1        -1    #f      #t)
+   (list ins-pblconsti #f    1        -1    #f      #t)
+   (list ins-pbvconsti #f    1        -1    #f      #t)
+   (list ins-pbptri    #f    1        -1    #f      #t)
    
    (list ins-call    #t)
    (list ins-ret     #t)
@@ -87,11 +95,16 @@
 (define is-terminal-instr?
   (lambda (tok)
     (and (is-instr? tok)
-	 (cadr (lookup-instr-info tok)))))
+	 (let ((info (lookup-instr-info tok)))
+	   (and (not (null? info))
+		(cadr info))))))
 
 (define instr-consumption-depth
   (lambda (tok)
-    (if (is-instr? tok) (caddr (lookup-instr-info tok)) 0)))
+    (if (is-instr? tok)
+	(let ((info (lookup-instr-info tok)))
+	  (if (not (null? info))
+	      (caddr info) 0)) 0)))
 
 (define instr-stack-delta
   (lambda (tok)
@@ -458,11 +471,16 @@
     (letrec ((helper (lambda (acc)
 		       (let ((tok (asm-next-token)))
 			 (if (not tok) 
-			     (reverse acc)
-			     (if (or (is-terminal-instr? tok)
+			     (begin
+			       (reverse acc))
+			     (begin
+			       ;; (display "got token: ")
+			       ;; (display tok)
+			       ;; (display "\n")
+			       (if (or (is-terminal-instr? tok)
 				     (is-definition? tok))
 				 (reverse (cons tok acc))
-				 (helper (cons tok acc))))))))
+				 (helper (cons tok acc)))))))))
       (helper '()))))
 
 			 
@@ -578,8 +596,11 @@
 							(let ((s (split bb len)))
 							  (let ((xs (car s))
 								(ys (cdr s)))
+							    ;; (display "Checking sequence: ")
+							    ;; (display xs)
+							    ;; (display "\n")
 							    (if (check xs)
-								(cons #t (repl xs ys))
+       								(cons #t (repl xs ys))
 								(cons changed bb))))
 							(cons changed bb))))
 						(cons changed bb)
@@ -597,10 +618,11 @@
 
 (define go
   (lambda ()
-    (let ((bb (peephole (asm-read-basic-block))))
+    (let ((bb  (peephole (asm-read-basic-block))))
       (if (not (null? bb))
 	  (begin
-	    (display ";; basic block\n")
+	    ;; (display ";; basic block\n")
+	    (display "")
 	    (print-basic-block bb)
 	    (go))
 	  '()))))
