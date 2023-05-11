@@ -20,6 +20,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <arpa/inet.h>
+
 #include "interpreter.h"
 
 #define PACK_NUM(x)        htonl(MAKE_NUM(x))

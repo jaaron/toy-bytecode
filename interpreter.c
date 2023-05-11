@@ -40,6 +40,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <arpa/inet.h>
 
 /* 
    The file interpreter.h defines all the opcodes, and the basic types
@@ -566,7 +567,10 @@ static inline void inspector(void){
 	case 'c': while(getchar() != '\n'); single_step = 0; return;
 	case 'p': {
 	    int addr;
-	    scanf("%d", &addr); 
+	    if(scanf("%d", &addr) < 1){
+	      fprintf(stderr, "Invalid command. Expected 'p <addr>'\n");
+	      break;
+	    }
 	    while(getchar()!='\n');
 	    fprintf(stderr, "%d:\t", addr);
 	    print_cell(stderr, memory[addr]);
@@ -574,7 +578,10 @@ static inline void inspector(void){
 	} break;
 	case 's': {
 	    int offset;
-	    scanf("%d", &offset); 
+	    if(scanf("%d", &offset) < 1){
+	      fprintf(stderr, "Invalid command. Expected 's <offset>'\n");
+	      break;
+	    }
 	    while(getchar()!='\n');
 	    fprintf(stderr, "STACK(%d):\t", offset);
 	    print_cell(stderr, STACK(offset));
