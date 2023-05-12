@@ -15,35 +15,46 @@
 ;; You should have received a copy of the GNU General Public License
 ;; along with toy-bytecode.  If not, see <http://www.gnu.org/licenses/>.
 
-; utility functions
-(define last (lambda (l) (if (and (not (null? l)) 
-				  (pair? l)
-				  (pair? (cdr l))
-				  (not (null? (cdr l))))
-			     (last (cdr l))
-			     l)))
+;; Section 0: General Utility Functions
+;;
+;; These seem more or less standard lib-like but don't exist in the
+;; scheme standard lib.
 
-(define string-is-numeric? (lambda (str)
-			     (let ((first-char (string-ref str 0))
-				   (strlen     (string-length str))
-				   (test (lambda (c v) (if v (char-is-digit? c) v))))
-			       (and (< 0 strlen)
-				    (if (< 1 strlen)
-					(and 
-					 (or (char=? first-char #\-)
-					     (char=? first-char #\+)
-					     (char-is-digit? first-char))
-					 (string-fold test #t str 1 (string-length str)))
-					(char-is-digit? first-char))))))
+;; Equivalent to CL last function, given a pair if the cdr is a pair
+;; or a pair with null cdr, return the it else return last of the cdr.
+(define last
+  (lambda (l)
+    (if (and (not (null? l)) 
+             (pair? l)
+             (pair? (cdr l))
+             (not (null? (cdr l))))
+        (last (cdr l))
+        l)))
+
+;; Return true if a string represents a decimal number with an
+;; optional +/- prefix
+(define string-is-numeric?
+  (lambda (str)
+    (let ((first-char (string-ref str 0))
+          (strlen     (string-length str))
+          (test (lambda (c v) (if v (char-is-digit? c) v))))
+      (and (< 0 strlen)
+           (if (< 1 strlen)
+               (and 
+                (or (char=? first-char #\-)
+                    (char=? first-char #\+)
+                    (char-is-digit? first-char))
+                (string-fold test #t str 1 (string-length str)))
+               (char-is-digit? first-char))))))
 
 
-; The underlying VM uses a tagged memory model that differentiates between
-; numbers, pointers, vm constants, and language constants. 
-; Numeric values in the assembly must be tagged with an appropriate identifier
-; to convince the assembler to tag the cell with the appropriate type.  
-;
+;; Section 1: Assembly Code Generation Helpers
+;;
+;; First we define symbols for all the commonly used instructions,
+;; then some helper functions to generate ASM syntax for the assembler
+;; executable.
 
-; string constants for each instruction
+;; String constants for common instructions
 (define ins-push	"PUSH")
 (define ins-pop		"POP")
 (define ins-swap	"SWAP")
@@ -71,65 +82,136 @@
 (define ins-bor     	"BOR")
 (define ins-band	"BAND")
 
-;; The instructions are all used at most once in the compiler so its
-;; cheaper to include them as string literals then to clutter up the
-;; environment with them.
+;; The instructions below are all used at most once in the compiler so
+;; its cheaper to include them as string literals then to clutter up
+;; the environment with them.
 
+;; (define ins-div	  "DIV")
+;; (define ins-mod	  "MOD")
+;; (define ins-getc	  "GETC")
+;; (define ins-dump   	  "DUMP")
+;; (define ins-pint	  "PINT")
+;; (define ins-pchr 	  "PCHR")
+;; (define ins-islconst	  "ISLCONST")
+;; (define ins-ischr	  "ISCHR")
+;; (define ins-isins	  "ISINS")
+;; (define ins-pbin       "PBIN")
+;; (define ins-pblconsti  "PBLCONSTI")
+;; (define ins-pblvconsti "PBLVCONSTI")
+;; (define ins-pbptri     "PBPTRI")
+;; (define ins-brk        "BRK")
 
-;; (define ins-div	"DIV")
-;; (define ins-mod	"MOD")
-;; (define ins-getc	"GETC")
-;; (define ins-dump	"DUMP")
-;; (define ins-pint	"PINT")
-;; (define ins-pchr	"PCHR")
-;; (define ins-islconst	"ISLCONST")
-;; (define ins-ischr	"ISCHR")
-;; (define ins-isins	"ISINS")
+;; The underlying VM uses a tagged memory model that differentiates between
+;; numbers, pointers, vm constants, and language constants. 
+;; Numeric values in the assembly must be tagged with an appropriate identifier
+;; to convince the assembler to tag the cell with the appropriate type.  
 
-; Language constants
+;; Language constants
 (define false-value  "FALSE")
 (define true-value   "TRUE")
 
-; return a string containing the asm representation of a number
+;; Return a string containing the asm representation of a number
 (define asm-number  (lambda (x) (string-append "n" (if (number? x) (number->string x) x))))
 ; return a string containing the asm representation of a pointer
 (define asm-pointer (lambda (x y) (string-append "p" (if (number? x) (number->string x) x) 
 						 "," (if (number? x) (number->string y) y)
 						 )))
-; return a string containing the asm representation of a language constant
+;; Return a string containing the asm representation of a language constant
 (define asm-lang-const (lambda (x) (string-append "l" (if (number? x) (number->string x) x))))
 
+;; Return a string containing the asm representation of a label reference
 (define asm-label-reference  (lambda (name) (string-append "@" name)))
+
+;; Return a string containing the asm representation of a label with undefined size
 (define asm-label-definition (lambda (name) (string-append ":" name)))
+
+;; Return a string containing the asm representation of a label with defined size
 (define asm-label-definition-sz (lambda (name sz)
 				  (string-append (asm-label-definition name) 
 						 (string-append "," (number->string sz)))))
 
+;;
+;; Section 2: Assembly and Compiler Constants for Scheme-Level Datastructure
+;;
+;; We support three (and pretend we support four) datatypes at the
+;; scheme level and we want to make sure we're able to distinguish
+;; them at the bytecode level:
+;;     * pairs (consboxes)
+;;     * vectors
+;;     * strings
+;;     * symbols
 
-(define ptr-type-offset (asm-number 0))
+;; When we create Scheme level objects (strings, vectors, symbols),
+;; we store a type tag at offset zero from the object base.
+(define asm-ptr-type-offset (asm-number 0))
 
+;; Consboxes don't get the type field, we just store the car at offset
+;; 0 and cdr at offset 1
 (define consbox-size       2)
 (define asm-consbox-size   (asm-number consbox-size))
-(define consbox-car-offset (asm-number 0))
-(define consbox-cdr-offset (asm-number 1))
+(define asm-consbox-car-offset (asm-number 0))
+(define asm-consbox-cdr-offset (asm-number 1))
 
-(define vector-type-flag     (asm-lang-const 2))
-(define vector-length-offset (asm-number 1))
-(define raw-vector-elems-offset 2)
-(define vector-elems-offset  (asm-number raw-vector-elems-offset))
-(define string-type-flag     (asm-lang-const 3))
-(define string-length-offset vector-length-offset)
-(define string-chars-offset  vector-elems-offset)
-(define symbol-type-flag     (asm-lang-const 3))
+;; Vectors, Strings, and Symbols are all the same under the hood here,
+;; except we don't actually deal with symbols.
+(define vector-type-flag         (asm-lang-const 2))
+(define asm-vector-length-offset (asm-number 1))
+(define raw-vector-elems-offset  2)
+(define asm-vector-elems-offset  (asm-number raw-vector-elems-offset))
+(define string-type-flag         (asm-lang-const 3))
+(define asm-string-length-offset asm-vector-length-offset)
+(define asm-string-chars-offset  asm-vector-elems-offset)
+;; We should actually support symbols
+(define symbol-type-flag         (asm-lang-const 3))
 
+;;
+;; Section 3: Label Generation
+;;
+;; We should probably be a bit more careful to ensure the user can't
+;; possibly introduce symbols that collide with our compiler generated
+;; symbols, but instead we just claim ownership of the __ prefix.
 
-; A few builtin forms are handled specially
-; by the compiler.  Some of these will later
-; be subsumed by macro capabilities but for right
-; now they are just special voodoo.
-;
-; This list associates the symbols with special
-; compiler functions.
+;; Check if the given string is "safe" as an assembly label. Meaning
+;; all chars are alphanumeric+'_'
+(define asm-safe
+  (lambda (s)
+    (list->string
+     (reverse
+      (string-fold (lambda (c acc)
+		     (if (char-is-asm-safe? c) (cons c acc)
+			 (cons #\_ acc))) '() s 0 (string-length s))))))
+
+;; Keep track of how many labels we've generated, we'll append and
+;; increment this every time we create a new label.
+(define label-counter 0)
+
+;; Generate a fresh label to be used in the assembly. Primarily used
+;; for lambdas and constants appearing in the source code (e.g.,
+;; strings or vectors). The argument `lbl` may be nil, or may be some
+;; related string that the calling code would like included in the
+;; generated label. This is ued to include when compiling
+;; `(define foo (lambda ...))` expressions to include `foo` in the
+;; label of generated for the lambda to make it slightly easier to read
+;; the assembly.
+(define fresh-label (lambda (lbl)
+		      (set! label-counter (+ label-counter 1))
+		      (string-append (if lbl
+					 (string-append "__anonymous_"
+							(asm-safe lbl))
+					 "__anonymous")
+				     (number->string label-counter))
+		      ))
+
+;;
+;; Section 4: Special Forms Preamble
+;;
+;; A few builtin forms are handled specially by the compiler.  Some of
+;; these will later be subsumed by macro capabilities but for right
+;; now they are just special voodoo.
+;;
+;; This list associates the symbols with special compiler
+;; functions. The handlers are actually defined below with other
+;; compilation functions.
 (define special-forms 
   (lambda ()
     (list
@@ -146,46 +228,51 @@
      )
     ))
 
-; search the list of builtin forms for a 
-; particular form   
+;; Search the list of builtin forms for a 
+;; particular form   
 (define find-special
   (lambda (f)
     (let ((x (assoc f (special-forms))))
       (and x (cdr x)))))
 
-; The top-level-env is a list containing the list of symbols 
-; defined by the compiler at the top level.
-;
-; The runtime environment is represented as a list of vectors
-; references to symbols are replaced with a traversal of this
-; structure based on the level of enclosing scope where the symbol was
-; defined, and the index of the variable in that scope.  This is taken
-; directly from the SECD machine's representation of the environment.
-;
-; For example suppose we have something like:
-;   (((lambda (x) 
-;        (lambda (z) (+ x z)))
-;        5)
-;      7)
-;
-; The inner lambda (that gets returned and applied to the arg 7) refers to three
-; different symbols:  '+' 'x' and 'z' that are each declared at a different depth
-; in the enclosing environment. 
-; When this lambda is evaluated (with the argument 7) the environment will look like:
-;   ([7]
-;    [5]
-;    ["=" "null?" "cons" "car" "cdr" "+" ...])
-;
-; So the reference to symbol 'z' will be compiled to (vector-ref (car env) 0)
-;    the reference to symbol 'x' will be compiled to (vector-ref (car (cdr env)) 0) and
-;    the reference to symbol '+' will be compiled to (vector-ref (car (cdr (cdr env))) 5)
-;
-; Note: this isn't strictly accurate since the symbols 'vector-ref',
-;       'car' and 'cdr' are themselves defined in the environment and
-;       would thus require lookups making this expansion impossible.
-;       What really happens is that a non-closure form of the car and
-;       cdr procedures are invoked directly.  See the functions
-;       u-call-* below.
+;;
+;; Section 5: The Environment
+;;
+;; The top-level-env is a list containing the list of symbols defined
+;; by the compiler at the top level.
+;;
+;; The runtime environment is represented as a list of vectors
+;; references to symbols are replaced with a traversal of this
+;; structure based on the level of enclosing scope where the symbol
+;; was defined, and the index of the variable in that scope.  This is
+;; taken directly from the SECD machine's representation of the
+;; environment.
+;;
+;; For example suppose we have something like:
+;;   (((lambda (x) 
+;;        (lambda (z) (+ x z)))
+;;        5)
+;;      7)
+;;
+;; The inner lambda (that gets returned and applied to the arg 7)
+;; refers to three different symbols: '+' 'x' and 'z' that are each
+;; declared at a different depth in the enclosing environment.  When
+;; this lambda is evaluated (with the argument 7) the environment will
+;; look like:
+;;   ([7]
+;;    [5]
+;;    ["=" "null?" "cons" "car" "cdr" "+" ...])
+;;
+;; So the reference to symbol 'z' will be compiled to (vector-ref (car env) 0)
+;;    the reference to symbol 'x' will be compiled to (vector-ref (car (cdr env)) 0) and
+;;    the reference to symbol '+' will be compiled to (vector-ref (car (cdr (cdr env))) 5)
+;;
+;; Note: this isn't strictly accurate since the symbols 'vector-ref',
+;;       'car' and 'cdr' are themselves defined in the environment and
+;;       would thus require lookups making this expansion impossible.
+;;       What really happens is that a non-closure form of the car and
+;;       cdr procedures are invoked directly.  See the functions
+;;       u-call-* below.
 
 (define top-level-env 
   (quote ((("equal?"             "equal")
@@ -237,6 +324,14 @@
 
 (define initial-env-label "__initial_environment")
 
+;;
+;; Section 6: Assembly Output Helpers
+;;
+;; Functions for outputting assembly code. These get used by the
+;; compilation routines to actually generate assembly.
+
+;; Output a named literal consbox definition to the assembly stream
+;; Returns the name of the consbox
 (define append-named-consbox
   (lambda (name car-value cdr-value)
     (append-instructions 
@@ -245,13 +340,20 @@
      cdr-value)
     name))
 
+;; Output a literal "anonymous" consbox defintion by generating a
+;; fresh label. Returns the label used so that subsequent code can
+;; refer to it.
 (define append-consbox 
   (lambda (car-value cdr-value)
-    (append-named-consbox (fresh-label) car-value cdr-value)))
+    (append-named-consbox (fresh-label #f) car-value cdr-value)))
 
+;; Given a list of assembly values (numbers, constants, or symbols),
+;; output a literal vector definition with the same elements to the
+;; assembly code.
+;; Returns a fresh label genearted to refer to the vector
 (define append-list-as-vector 
   (lambda (vec-list)
-    (let ((lbl (fresh-label)))
+    (let ((lbl (fresh-label #f)))
       (append-instructions
 	(asm-label-definition-sz lbl (+ (length vec-list) raw-vector-elems-offset))
 	vector-type-flag
@@ -259,6 +361,10 @@
       (apply append-instructions vec-list)
       lbl)))
 
+;; Append the initial environment as a literal list with one element
+;; that is a vector (as described above) to the assembly stream.
+;;
+;; This should only be called once.
 (define append-initial-env
   (lambda ()
     (append-named-consbox "__nil" 
@@ -270,22 +376,14 @@
       (append-list-as-vector (map (lambda (l) (asm-label-reference (cadr l))) (car top-level-env))))
      (asm-label-reference "__nil"))))
 
-; (fresh-label) is used to generate labels for each lambda 
-; expression and for string constants.  
-(define label-counter 0)
-(define fresh-label (lambda ()
-		      (set! label-counter (+ label-counter 1))
-		      (string-append "__anonymous" (number->string label-counter))
-		      ))
-
-; append an instruction to the ouptut stream
+;; Append an instruction to the ouptut stream
 (define append-instruction
   (lambda (ins)
     (begin 
       (display ins)
       (display "\n"))))
   
-; append a list of instructions to the output stream
+;; Append a list of instructions to the output stream
 (define append-instructions 
   (lambda inss
     (letrec ((helper (lambda (inss)
@@ -295,69 +393,88 @@
 			     (helper (cdr inss)))))))
       (helper inss))))
 
+;; Section 7: Intrinsics and Compilation
+;;
+;; We're now actually into the guts of the compiler.  
+;; The conventions are as follows:
+;;   Functions of the form 
+;;       - 'assembly-foo' take no arguments, append asm instructions
+;;                        to the output stream for completing the task
+;;                        foo, and return no useful result.
+;;
+;;       - 'u-call-foo'   serve as a wrapper around the assembly-foo
+;;                        functions.  For larger blocks of assembly code
+;;                        the u-call-foo insert a CALL to the definitions,
+;;                        shorter ones are inlined.  Again, no useful result
+;;                        is returned.
+;;
+;;       - 'compile-foo'  these are the main compiler functions.  All of 
+;;                        these take atleast two arguments, the s-expression 
+;;                        to compile and the symbolic environment list used
+;;                        to resolve references.  Some of these take a boolean
+;;                        'rest' argument which is a bad hack to support tail-call
+;;                        optimization.  If 'rest' is false it means their is 
+;;                        definitely no continuation to this expression and so
+;;                        a closure invocation can be optimized by not storing the
+;;                        return environment and using a JMP rather than a CALL
+;;                        (see assembly-funcall vs. assembly-tailcall below).  
+;;                        All compile-* functions must return either 0-arity function
+;;                        or false.  The 0-arity function represents work that is 
+;;                        being delayed until after the compilation of the main
+;;                        program body, e.g., the body of lambda expressions.
+;;                        It is vital that these return values be propagated out
+;;                        to the main compiler loop 'do-compiler-task'
+;;
+;; When generating non-trivial sequences of assembly functions, we'll
+;; track the stack as a list in comments with the bottom of the stack
+;; as the first element and the top in the last.
 
-;
-; We're now actually into the guts of the compiler.  
-; The conventions are as follows:
-;   Functions of the form 
-;       - 'assembly-foo' take no arguments, append asm instructions
-;                        to the output stream for completing the task
-;                        foo, and return no useful result.
-;
-;       - 'u-call-foo'   serve as a wrapper around the assembly-foo
-;                        functions.  For larger blocks of assembly code
-;                        the u-call-foo insert a CALL to the definitions,
-;                        shorter ones are inlined.  Again, no useful result
-;                        is returned.
-;
-;       - 'compile-foo'  these are the main compiler functions.  All of 
-;                        these take atleast two arguments, the s-expression 
-;                        to compile and the symbolic environment list used
-;                        to resolve references.  Some of these take a boolean
-;                        'rest' argument which is a bad hack to support tail-call
-;                        optimization.  If 'rest' is false it means their is 
-;                        definitely no continuation to this expression and so
-;                        a closure invocation can be optimized by not storing the
-;                        return environment and using a JMP rather than a CALL
-;                        (see assembly-funcall vs. assembly-tailcall below).  
-;                        All compile-* functions must return either 0-arity function
-;                        or false.  The 0-arity function represents work that is 
-;                        being delayed until after the compilation of the main
-;                        program body, e.g., the body of lambda expressions.
-;                        It is vital that these return values be propagated out
-;                        to the main compiler loop 'do-compiler-task'
+;;
+;; Subsection 7.1: Consbox Primitives ASM
+;;
+;; Assembly for the primitive list functions car, cdr, and cons
 
-			   
-; assembly for the primitive list functions car, cdr, and cons
-; (ptr) -> ((car ptr))
-(define assembly-car  (lambda () (append-instructions ins-push consbox-car-offset ins-load)))
+(define assembly-car (lambda ()
+                       (append-instructions              ; (pair)
+                        ins-push asm-consbox-car-offset  ; (pair car-offset)
+                        ins-load)))                      ; (car)
 
-; (ptr) -> ((cdr ptr))
-(define assembly-cdr  (lambda () (append-instructions  ins-push consbox-cdr-offset ins-load)))
+(define assembly-cdr  (lambda ()
+                        (append-instructions             ; (pair)
+                         ins-push asm-consbox-cdr-offset ; (pair cdr-offset)
+                         ins-load)))                     ; (cdr)
 
-
-; (cdr car) -> ((cons car cdr))
 (define assembly-cons (lambda ()
-			(append-instructions 
-			 ins-push asm-consbox-size	; (car cdr 2)
-			 ins-aloc			; (car cdr hp)
-			 ins-push consbox-cdr-offset	; (car cdr hp 1)
-			 ins-stor			; (car hp) cdr stored
-			 ins-push consbox-car-offset	; (car hp 0)
-			 ins-stor)			; (hp)  cdr stored
+			(append-instructions             ; (car cdr)
+			 ins-push asm-consbox-size       ; (car cdr 2)
+			 ins-aloc                        ; (car cdr hp)
+			 ins-push asm-consbox-cdr-offset ; (car cdr hp 1)
+			 ins-stor			 ; (car hp) cdr stored
+			 ins-push asm-consbox-car-offset ; (car hp 0)
+			 ins-stor)			 ; (hp)  cdr stored
 			))
 
+(define assembly-set-car
+  (lambda ()
+    (append-instructions                                 ; (value pair)
+     ins-push asm-consbox-car-offset                     ; (value pair car-offset)
+     ins-stor)))                                         ; (pair)
 
-; top is the cons box to set, then the new value
-(define assembly-set-car 
-  (lambda () (append-instructions ins-push consbox-car-offset ins-stor)))
 (define assembly-set-cdr 
-  (lambda () (append-instructions ins-push consbox-cdr-offset ins-stor)))
+  (lambda ()
+    (append-instructions                                 ; (value pair)
+     ins-push asm-consbox-cdr-offset                     ; (value pair car-offset)
+     ins-stor)))                                         ; (pair)
 
-; these define how to call the three primitives car, cdr, and cons as
-; part of larger compiler generated sequences (e.g., function application)
-; for car, we just inline the assembly.  For cdr and cons we do a machine level
-; call into a function.
+;;
+;; Subsection 7.2: Consbox Primitive Invocation
+;;
+;; These define how to call the primitives car, cdr, set-car, set-cdr,
+;; cons, and make-vector as part of larger compiler generated
+;; sequences (e.g., function application) for car, cdr, set-car, and
+;; set-cdr we just inline the assembly.  For cons and make-vector we
+;; do a machine level call into a function.
+
 (define u-call-car  (lambda () (assembly-car))) ; car is 3 instructions, a function call is the same length
 					        ; so there is no reason not to inline it.
 
@@ -372,18 +489,22 @@
 (define u-call-set-car (lambda () (assembly-set-car)))
 (define u-call-set-cdr (lambda () (assembly-set-cdr)))
 
-(define u-call-make-vector (lambda () (append-instructions 
-					ins-push (asm-label-reference "__u_make_vector_nofill")
-					ins-call)))
+(define u-call-make-vector
+  (lambda ()
+    (append-instructions 
+     ins-push (asm-label-reference "__u_make_vector_nofill")
+     ins-call)))
 
-; function application convention
-; top of stack is the closure to apply, then the arguments
-; this is tricky.  We need to cons the argument list onto 
-; the closure's environment,  store the existing
-; environment pointer to the stack, set the environment 
-; pointer to the new list, invoke the closure's code,
-; then restore the environment pointer on return.
-;
+;;
+;; Section 7.3: Function Invocation and Argument Handling
+;;
+;; The convention is that the top of stack is the closure to apply,
+;; then the arguments this is tricky.  We need to cons the argument
+;; list onto the closure's environment, store the existing environment
+;; pointer to the stack, set the environment pointer to the new list,
+;; invoke the closure's code, then restore the environment pointer on
+;; return.
+;;
 (define assembly-make-args-helper (lambda (nr-args)
 				    (if (= nr-args 0) #f
 					(begin 
@@ -398,7 +519,7 @@
 			     (u-call-make-vector)
 			     (assembly-make-args-helper nr-args)))
 
-;; special case for referencing arguments to this function (i.e., depth = 0).
+;; Special case for referencing arguments to this function (i.e., depth = 0).
 (define assembly-get-arg
   (lambda (idx)
     (append-instruction ins-rdrr)
@@ -421,10 +542,12 @@
     (append-instruction ins-rdrr)
     (u-call-car)
     (append-instructions 
-     ins-push vector-length-offset
+     ins-push asm-vector-length-offset
      ins-load)))
 
-; (args clos) -> ((clos args)) 
+;; Actual assembly code for performing a scheme level function
+;; invocation.  This is relatively long, so actual callsites will do a
+;; macihne level CALL to this stub to perform the functioncall.
 (define assembly-funcall (lambda ()
 			   (append-instructions ; (args clos rp)
 			    (asm-label-definition "__funcall_tramp")
@@ -443,47 +566,49 @@
 			    (u-call-cdr)        ; (renv rp clos-code)
 			    (append-instruction ins-jmp)))
 
-(define u-call-funcall (lambda ()
-			 (append-instructions ins-push (asm-label-reference "__funcall_tramp")
-					      ins-call
-					      ins-swap
-					      ins-wtrr)))
+(define u-call-funcall
+  (lambda ()
+    (append-instructions                              ; (args clos)
+     ins-push (asm-label-reference "__funcall_tramp") ; (args clos __funcall_tramp)
+     ins-call                                         ; (envptr retval)
+     ins-swap                                         ; (retval envptr)
+     ins-wtrr)))                                      ; (retval)
 
-; tail calls are sneakier we avoid saving the current
-; env pointer. 
-; (args clos) -> ((clos args))
- (define assembly-tailcall (lambda ()
-			    (append-instructions
-			     (asm-label-definition "__tailcall_tramp")
-			     ins-dup)				; (renv rp args clos clos)
-			    (u-call-car)			; (renv rp args clos env)			    
-			    (append-instructions
-			     ins-swap				; (renv rp args env clos)
-			     ins-rot)				; (renv rp clos args env)
-			    (u-call-cons)			; (renv rp clos (args . env)* )
-			    (append-instruction ins-wtrr)	; (renv rp clos) rr = (args . env)
-								; note that we didn't store the current env
-								; this is a tail call so we'll return straight
-								; to the current renv/rp!
-			    (u-call-cdr)			; (renv rp code)
-			    (append-instruction ins-jmp)	; we jump into the call with 
-								;   (renv rp) 
-								; on return we'll have pc = rp, and
-								;   (renv rval) on the stack
-								; just as on return from non-tail call above.
-			    ))
+;; Tail calls are sneakier because we avoid saving the current env pointer. 
+(define assembly-tailcall
+  (lambda ()
+    (append-instructions
+     (asm-label-definition "__tailcall_tramp")
+     ins-dup)			  ; (renv rp args clos clos)
+    (u-call-car)		  ; (renv rp args clos env)			    
+    (append-instructions
+     ins-swap			  ; (renv rp args env clos)
+     ins-rot)			  ; (renv rp clos args env)
+    (u-call-cons)		  ; (renv rp clos (args . env)* )
+    (append-instruction ins-wtrr) ; (renv rp clos) rr = (args . env)
+                                  ; note that we didn't store the current env
+                                  ; this is a tail call so we'll return straight
+                                  ; to the current renv/rp!
+    (u-call-cdr)		  ; (renv rp code)
+    (append-instruction ins-jmp)  ; we jump into the call with 
+                                  ;   (renv rp) 
+                                  ; on return we'll have pc = rp, and
+                                  ;   (renv rval) on the stack
+                                  ; just as on return from non-tail call above.
+    ))
 
-(define u-call-tailcall (lambda ()
-			  (append-instructions "PUSH" (asm-label-reference "__tailcall_tramp")
-					       "JMP")))
+(define u-call-tailcall
+  (lambda ()
+    (append-instructions                               ; (renv rp args clos)
+     ins-push (asm-label-reference "__tailcall_tramp") ; (renv rp args clos __tailcal_tramp)
+     ins-jmp)))                                        ; never comes back
 
 ; returning is simple since cleanup is handled by the caller
 (define assembly-funret (lambda () (append-instruction ins-ret)))
-			   
-; Assembly for loading a cell from the environment.
-; assembly-env-cell places the cons box whose car is 
-; at the desired offsets on the stack.  
-; assembly-env-val actually loads the value.  
+
+;; Assembly for loading a cell from the environment.
+;; assembly-env-cell places the cons box whose car is at the desired
+;; offsets on the stack.  assembly-env-val actually loads the value.
 (define assembly-env-vec
   (lambda (depth)
     (append-instructions 
@@ -528,10 +653,32 @@
 
 (define assembly-nil      
   (lambda ()
-    (append-instructions  ins-push (asm-label-reference "__nil") )))
+    (append-instructions ins-push (asm-label-reference "__nil") )))
 
-; Lookup functions,  find a particular symbol in the symbolic environment
-; list. These are complimentary to the assembly-env-* functions above.
+;;
+;; Subsection 7.3: Symbolic Environment
+;;
+;; As noted above, the runtime environment is indexed by integers
+;; corresponding to when things are declared. The compiler tracks the
+;; "symbolic environment" mapping between symbol names and their index
+;; in the runtime environment. These routines deal with that mapping.
+;;
+;; Unlike the runtime environment, the symbolic environment is a list
+;; of lists (rather than a list of vectors. Symbols from the most
+;; local scope are stored in the car of the list working out to the
+;; top-level env. The 'depth' of a symbol is the index of its scsope
+;; in the environment, while the 'offset' is the index within this
+;; scope.
+
+;; Lookup the index of a symbol in an list of symbols return #f if not
+;; found.
+;;    * r is the symbol name we're looking up
+;;    * e is the environment to search in
+;;    * cont is the continuation to pass the offset to
+;;
+;; For some reason this handles the case where the element in the list
+;; is a list whose car is the symbol we're looking for. Not sure if
+;; this is important.
 (define lookup-reference-offset 
   (lambda (r e cont)
     (if (null? e) (cont #f)		
@@ -541,6 +688,12 @@
 				     (lambda (z) 
 				       (cont (if z (+ z 1) z))))))))
 
+;; Lookup the depth and offset of a symbol name in the
+;; environment. Arguments are the same as for lookup-reference-offset
+;; except that `e` is the full (or a tail of) the symbolic
+;; environment.
+;;
+;; Return value is either a conspair of (depth . offset) or #f
 (define lookup-reference-depth
   (lambda (r e cont)
     (if (null? e) (cont #f)
@@ -559,13 +712,32 @@
   (lambda (r e)
     (lookup-reference-depth r e (lambda (x) x))))
 
-; do-compile-task is the main compiler loop. 
-; it takes a 0-arity function to invoke (or false),
-; and recurs on the result of invoking the function.
+;;
+;; Subsection 7.4: Actually Compiling Stuff
+;;
+;; The structure/flow of the compilation process is a little
+;; convoluted to ensure all (define ...) forms are introduced before
+;; their bodies are compiled to allow them to refer to eachother.
+;;
+;;    * compiler-run that reads sexps (via the reader) until EOF is
+;;      hit and calls compile-sexp on each
+
+;;    * compile-sexp takes a sexp, compiles it, and returns a 0-arity
+;;      function for any deferred compilation tasks (e.g., lambda
+;;      bodies). Actual compilation is performed by various
+;;      `compile-foo` functions specializing on different forms
+;;      (lists, numbers, special forms defined above, etc...)
+;;
+;;    * do-compile-task is used to recursively evaluate a compilation
+;;    task expressed as a 0-arity function that returns either a new
+;;    compilation task or #f on completion.
+;;
+
+;; do-compile-task is the main compiler loop.  it takes a 0-arity
+;; function to invoke (or false), and recurs on the result of invoking
+;; the function.
 (define do-compile-task 
   (lambda (t) (if t (do-compile-task (t)) #f)))
-
-; Compilation functions
 
 (define compile-number 
   (lambda (c env) (append-instructions ins-push (asm-number c)) #f))
@@ -584,7 +756,7 @@
 
 (define compile-string 
  (lambda (s env) 
-   (let ((strlabel (fresh-label))
+   (let ((strlabel (fresh-label #f))
 	 (strlen (calculate-string-length s)))
      (append-instructions ins-push (asm-label-reference strlabel))
      (lambda ()         
@@ -600,7 +772,7 @@
 
 (define compile-symbol
   (lambda (s env)
-    (let ((symlabel (fresh-label))
+    (let ((symlabel (fresh-label #f))
 	  (symlen (calculate-symbol-length s)))
       (append-instructions ins-push (asm-label-reference symlabel))
       (lambda ()
@@ -668,6 +840,8 @@
 				(compile-symbol x env)
 				(compile-reference x env))))))))))
 
+;; Return the prefix of a list that is a "proper" list. e.g., given
+;; `(1 2 3 . 4)` returns `(1 2 3)`
 (define list-part
   (lambda (l)
     (letrec ((helper (lambda (l acc)
@@ -697,8 +871,8 @@
 ; code is statically defined below initial heap pointer but in order
 ; to support eval we'll have to do something more clever later.
 (define compile-lambda 
-  (lambda (l env rest)
-    (let ((label (fresh-label)))
+  (lambda (l env rest lbl)
+    (let ((label (fresh-label lbl)))
       (append-instructions
        ins-rdrr ins-push (asm-label-reference label) )
       (u-call-cons)
@@ -714,14 +888,14 @@
 (define compile-let-bindings
   (lambda (bs env)
     (if (null? bs)  #f
-	(let ((r2 (compile-sexp (car (cdr (car bs))) env #t)))
+	(let ((r2 (compile-sexp (car (cdr (car bs))) env #t #f)))
 	  (let ((r1 (compile-let-bindings (cdr bs) env)))
 	    (lambda ()
 	      (do-compile-task r1)
 	      (do-compile-task r2)))))))
 
 (define compile-let
-  (lambda (l env rest)
+  (lambda (l env rest lbl)
     (let ((r1 (compile-let-bindings (car (cdr l)) env))
 	  (e (map (lambda (x) (car x)) (car (cdr l)))))
       (assembly-make-args (length (cadr l)))
@@ -741,14 +915,14 @@
 	))))
 
 (define compile-set! 
-  (lambda (l env rest)
+  (lambda (l env rest lbl)
     (let ((cell-id (lookup-reference (cadr l) env)))
-      (let ((r (compile-sexp (caddr l) env #t)))
+      (let ((r (compile-sexp (caddr l) env #t #f)))
 	(assembly-set-env-val (length env) (car cell-id) (cdr cell-id))
 	r))))
 
 (define compile-letrec
-  (lambda (l env rest)
+  (lambda (l env rest lbl)
     (letrec ((empty-binders (map (lambda (b) (list (car b) (list "quote" '())))
 				 (cadr l)))
 	     (helper        (lambda (binders body)
@@ -761,15 +935,15 @@
 	     (cons empty-binders
 		   (helper (reverse (cadr l))
 			   (cddr l))))
-       env rest))))
+       env rest #f))))
 
 (define compile-begin
-  (lambda (l env rest) (compile-sequence (cdr l) env rest)))
+  (lambda (l env rest lbl) (compile-sequence (cdr l) env rest)))
 
 (define compile-sequence 
   (lambda (l env rest)
     (if (null? l) #f
-	(let ((r1 (compile-sexp (car l) env (if (null? (cdr l)) rest #t) )))
+	(let ((r1 (compile-sexp (car l) env (if (null? (cdr l)) rest #t) #f)))
 	  (if (not (null? (cdr l)))
 	      (append-instruction ins-pop) 
 	      #f
@@ -791,10 +965,10 @@
 ; where v is the value of the defined symbol and pre-env and
 ; post-env are the environments before and after the call.
 (define compile-define
-  (lambda (l env rest)
+  (lambda (l env rest lbl)
     (append-instruction (string-append ";; Definition of " (car (cdr l))))
     (let ((v (lookup-reference (car (cdr l)) env))
-	  (r (compile-sexp (car (cdr (cdr l))) env #t)))
+	  (r (compile-sexp (car (cdr (cdr l))) env #t (car (cdr l)))))
       (if v
 	  (begin
 	    (append-instruction (string-append ";; Updating binding " (car (cdr l))))
@@ -809,10 +983,10 @@
       r)))
   
 (define compile-and
-  (lambda (l env rest)    
-    (let ((out-label (fresh-label)))
+  (lambda (l env rest lbl)
+    (let ((out-label (fresh-label #f)))
       (letrec ((helper (lambda (es rs)
-			 (let ((r  (compile-sexp (car es) env #t))
+			 (let ((r  (compile-sexp (car es) env #t #f))
 			       (es (cdr es)))
 			   (if (null? es)
 			       (begin
@@ -831,16 +1005,16 @@
 	  (helper (cdr l) (lambda () #f)))))))
       
 (define compile-or
-  (lambda (l env rest)
-    (let ((out-label (fresh-label)))
+  (lambda (l env rest lbl)
+    (let ((out-label (fresh-label #f)))
       (letrec ((helper (lambda (es rs)
-			 (let ((r  (compile-sexp (car es) env #t))
+			 (let ((r  (compile-sexp (car es) env #t #f))
 			       (es (cdr es)))
 			   (if (null? es) 
 			       (begin
 				 (append-instruction (asm-label-definition out-label))
 				 (lambda () (do-compile-task r) (rs)))
-			       (let ((next-term (fresh-label)))
+			       (let ((next-term (fresh-label #f)))
 				 (append-instructions ins-dup
 						      ins-push false-value
 						      ins-eq
@@ -858,28 +1032,28 @@
 ; when we can detect application of a builtin
 ; we can avoid function call overhead and just inline the assembly
 (define compile-if
-  (lambda (l env rest)
+  (lambda (l env rest lbl)
     (if (not (= (length l) 4)) 
 	(begin 
 	  (display "Error in compile-if wrong number of arguments\n\t")
 	  (display l)
 	  (newline)
 	  (quit))
-	(let ((false-label (fresh-label))
-	      (join-label (fresh-label))
+	(let ((false-label (fresh-label #f))
+	      (join-label (fresh-label #f))
 	      (conditional (car (cdr l)))
 	      (true-case  (car (cdr (cdr l))))
 	      (false-case (car (cdr (cdr (cdr l))))))
-	  (let ((r1 (compile-sexp conditional env #t)))
+	  (let ((r1 (compile-sexp conditional env #t #f)))
 	    (append-instructions
 	     ins-push false-value
 	     ins-eq
 	     ins-push (asm-label-reference false-label)
 	     ins-jtrue)
-	    (let ((r2 (compile-sexp true-case env rest)))
+	    (let ((r2 (compile-sexp true-case env rest #f)))
 	      (append-instructions ins-push (asm-label-reference join-label) ins-jmp
 				   (asm-label-definition false-label))
-		(let ((r3 (compile-sexp false-case env rest)))
+		(let ((r3 (compile-sexp false-case env rest #f)))
 		  (append-instruction (asm-label-definition join-label))
 		  (lambda ()
 		    (do-compile-task r1)
@@ -906,14 +1080,14 @@
 	    (compile-atom s env #t)))))
 
 (define compile-quote 
-  (lambda (s env rest)
+  (lambda (s env rest lbl)
     (compile-quoted-sexp (car (cdr s)) env rest)))
 
 (define compile-arguments
   (lambda (n l env)
     (if (null? l) 
 	(assembly-make-args n)
-	(let ((r2 (compile-sexp (car l) env #t)))
+	(let ((r2 (compile-sexp (car l) env #t #f)))
 	  (let ((r1 (compile-arguments n (cdr l) env)))
 	    (lambda () 
 	      (do-compile-task r1)
@@ -921,12 +1095,12 @@
 	      ))))))
 
 (define compile-list
-  (lambda (l env rest)
+  (lambda (l env rest lbl)
     (let ((s (find-special (car l))))
       (if s 
-	  (s l env rest)
+	  (s l env rest lbl)
 	  (let ((r1 (compile-arguments (length (cdr l)) (cdr l) env)))
-	    (let ((r2 (compile-sexp (car l) env #t)))
+	    (let ((r2 (compile-sexp (car l) env #t #f)))
 	      (if rest
 		  (u-call-funcall)
 		  (u-call-tailcall)
@@ -936,9 +1110,9 @@
 		(do-compile-task r2))))))))
 
 (define compile-sexp 
-  (lambda (s env rest)
+  (lambda (s env rest lbl)
     (if (list? s) 
-	(compile-list s env rest) 
+	(compile-list s env rest lbl) 
 	(compile-atom s env #f))))
 
 (define assembly-builtin-header 
@@ -949,11 +1123,14 @@
 			    (asm-label-reference uu-name))
       (append-instruction (asm-label-definition uu-name)))))
 
+;;
+;; Section 8: Compiler Intrinsics ASM
+;;
 (define define-builtin-functions
   (lambda (initial-env)
     (begin
-      (let ((loop            (fresh-label))
-	    (out             (fresh-label)))
+      (let ((loop            (fresh-label #f))
+	    (out             (fresh-label #f)))
 						;; (display "variadic plist")
 	(append-instructions 
 	 (asm-label-definition "__u_make_varargs_list")
@@ -985,7 +1162,7 @@
 	(u-call-car)				;; (rp nr-fixed-params (- i 1) i (- i 1) (car env))
 	(append-instructions 
 	 ins-swap				;; (rp nr-fixed-params (- i 1) l (car env) (- i 1))
-	 ins-push vector-elems-offset		;; (rp nr-fixed-params (- i 1) l (car env) (- i 1) vector-elems-offset)
+	 ins-push asm-vector-elems-offset	;; (rp nr-fixed-params (- i 1) l (car env) (- i 1) vector-elems-offset)
 	 ins-add				;; (rp nr-fixed-params (- i 1) l (car env) (+ (- i 1) vector-elems-offset))
 	 ins-load				;; (rp nr-fixed-params (- i 1) l (aref (car env) (- i 1)))
 	 ins-swap)				;; (rp nr-fixed-params (- i 1) (aref (car env) (- i 1)) l)
@@ -1000,7 +1177,7 @@
 	(u-call-car)				;; (rp l nr-fixed-params (car env)))
 	(append-instructions
 	 ins-swap				;; (rp l (car env) nr-fixed-params)
-	 ins-push vector-elems-offset		;; (rp l (car env) nr-fixed-params vector-elems-offset)
+	 ins-push asm-vector-elems-offset	;; (rp l (car env) nr-fixed-params vector-elems-offset)
 	 ins-add				;; (rp l (car env) (+ nr-fixed-params vector-elems-offset))
 	 ins-stor				;; (rp (car env))
 	 ins-ret)))				;; ((car env))
@@ -1093,8 +1270,8 @@
       (append-instruction "MOD")
       (assembly-funret))
 
-    (let ((shl-label (fresh-label))
-	  (out-label (fresh-label)))
+    (let ((shl-label (fresh-label "shl"))
+	  (out-label (fresh-label #f)))
       (assembly-builtin-header "arithmetic_shift")
       (assembly-get-arg 0)
       (assembly-get-arg 1)
@@ -1194,7 +1371,7 @@
       (assembly-funret)
       (append-instructions
        (asm-label-definition "__string_q_is_ptr")
-       ins-push ptr-type-offset
+       ins-push asm-ptr-type-offset
        ins-load
        ins-push string-type-flag
        ins-eq)
@@ -1245,7 +1422,7 @@
        ins-eq						; (rp x (= x nil))
        ins-push (asm-label-reference "__pair_q_isnil")	; (rp x (= x nil) @pair_q_is_nil)
        ins-jtrue					; (rp x)
-       ins-push ptr-type-offset				; (rp x 0)
+       ins-push asm-ptr-type-offset			; (rp x 0)
        ins-load    
        "ISLCONST"
        ins-push (asm-label-reference "__pair_q_islconst")
@@ -1257,7 +1434,7 @@
     (begin
       (assembly-builtin-header "vector_length")
       (assembly-get-arg 0)
-      (append-instructions ins-push string-length-offset ins-load)
+      (append-instructions ins-push asm-string-length-offset ins-load)
       (assembly-funret))
     
     (begin
@@ -1266,7 +1443,7 @@
       (assembly-get-arg 0)		; (c vec)
       (assembly-get-arg 1)		; (c vec n)
       (append-instructions
-       ins-push vector-elems-offset	; (c vec n 2)
+       ins-push asm-vector-elems-offset	; (c vec n 2)
        ins-add				; (c vec (+ n 2))
        ins-stor)			; (vec)      
       (assembly-funret))
@@ -1281,7 +1458,7 @@
        ins-swap							; (n s)
        ins-dup							; (n s s)
        ins-rot							; (s n s)
-       ins-push vector-length-offset				; (s n s vector-length-offset)
+       ins-push asm-vector-length-offset			; (s n s vector-length-offset)
        ins-load							; (s n total-length)
        ins-swap							; (s total-length n)
        ins-dup							; (s total-length n n)
@@ -1291,7 +1468,7 @@
        ins-jtrue						; (s n)
        ins-dup							; (s n n)
        ins-rot							; (n s n)
-       ins-push vector-elems-offset				; (n s n offset)
+       ins-push asm-vector-elems-offset				; (n s n offset)
        ins-add)							; (n s (+ n offset))
       (assembly-get-arg 1)					; (n s (+ n offset) v)
       (append-instructions
@@ -1311,14 +1488,14 @@
        (asm-label-definition "__u_make_vector_nofill")	; (n rp)
        ins-swap						; (rp n)
        ins-dup						; (n n)
-       ins-push vector-elems-offset	       		; (n n vector-elems-offset)
+       ins-push asm-vector-elems-offset	       		; (n n vector-elems-offset)
        ins-add						; (n (+ n vector-elems-offset))
        ins-aloc						; (n v)
        ins-push vector-type-flag			; (n v vector-type-flag)
        ins-swap						; (n vector-type-flag v)
-       ins-push ptr-type-offset				; (n vector-type-flag v ptr-type-offset)
+       ins-push asm-ptr-type-offset			; (n vector-type-flag v ptr-type-offset)
        ins-stor						; (n v)
-       ins-push vector-length-offset			; (n v vector-size-offset)
+       ins-push asm-vector-length-offset		; (n v vector-size-offset)
        ins-stor						; (v)
        ins-ret)
       (assembly-builtin-header "make_vector")
@@ -1336,14 +1513,14 @@
       (assembly-get-arg 0)							; (n)
       (append-instructions 
        ins-dup									; (n n)
-       ins-push string-chars-offset      					; (n n 2)
+       ins-push asm-string-chars-offset      					; (n n 2)
        ins-add									; (n (+ n 2))
        ins-aloc									; (n s)
-       ins-push string-length-offset     					; (n s 1)
+       ins-push asm-string-length-offset     					; (n s 1)
        ins-stor									; (s)
        ins-push string-type-flag						; (s string-type-flag)
        ins-swap									; (string-type-flag s)
-       ins-push ptr-type-offset							; (string-type-flag s 0)
+       ins-push asm-ptr-type-offset						; (string-type-flag s 0)
        ins-stor									; (s)
        )
       (assembly-nrargs)								; (s nr-args)
@@ -1397,9 +1574,9 @@
       (assembly-get-arg 0)
       (assembly-get-arg 1)
       (append-instructions 
-       ins-push vector-elems-offset
-	     ins-add
-	     ins-load)
+       ins-push asm-vector-elems-offset
+       ins-add
+       ins-load)
       (assembly-funret))	    
 
     (begin
@@ -1418,35 +1595,18 @@
       (assembly-funret))
 
     ))
-	   
 
-; compiler-run is the entry point into the compilation system.
-; it reads a sexp, checks for EOF compiles the sexp, and then 
-; calls do-compile-task with a function that will call compiler-run
-; again and then return the delayed work.  If EOF is found, and END
-; instruction is written and the delayed work finally gets evaluated.
-(define compiler-run 
-  (lambda ()
-    (let ((sp (read-sexp)))
-      (if sp
-	  (let ((r (compile-sexp sp top-level-env #t)))
-	    (do-compile-task 
-	     (lambda () 
-	       (compiler-run) 
-	       r)))
-	  (begin
-	    (append-instruction ins-end))))))
-
-; Into the reader.  
-;
-; The reader is pretty simple.  
-; read-sexp calls either read-atom or read-list
-; read-atom reads an atom and returns a pair with the atom read, 
-; and the next character of the input stream.
-;
-; read-list reads sexps until the returned 'next-char' is a close peren, 
-; then returns the list read, and the next non-whitespace character.
-; reader utility functions
+;;
+;; Section 9: The Reader
+;;
+;; The reader is pretty simple.  
+;; read-sexp calls either read-atom or read-list
+;; read-atom reads an atom and returns a pair with the atom read, 
+;; and the next character of the input stream.
+;;
+;; read-list reads sexps until the returned 'next-char' is a close peren, 
+;; then returns the list read, and the next non-whitespace character.
+;; reader utility functions
 (define is-space?
   (lambda (c) (if (eof-object? c) #t
 		  (if (char=? c #\space) #t
@@ -1460,10 +1620,19 @@
 						  (if (char=? c #\; ) #t 
 						      (if (char=? c #\.) #t
 							  #f))))))))
+(define char-is-alpha? (lambda (c)
+			 (or (and (char>=? c #\a) (char<=? c #\z))
+			     (and (char>=? c #\A) (char>=? c #\Z)))))
+
 (define char-is-digit?(lambda (c) (if (char>=? c #\0) (char<=? c #\9) #f)))
 (define is-char-name? (lambda (s) (if (string=? s "newline") #t 
 				      (if (string=? s "space") #t
 					  (if (string=? s "tab") #t #f)))))
+
+(define char-is-asm-safe? (lambda (c)
+			     (or (char-is-digit? c)
+				 (char-is-alpha? c)
+				 (char=? c #\_))))
 
 (define drop-chars-until (lambda (f) (let ((x (read-char))) (if (f x) x (drop-chars-until f)))))
 (define next-non-ws      (lambda ()  (drop-chars-until (lambda (z) (not (is-space? z))))))
@@ -1620,7 +1789,31 @@
 (define read-sexp
   (lambda () (parse-token (next-token))))
 
-; then run the compiler.
+;;
+;; Section 10: Main
+;;
+
+;; Compiler-run is the entry point into the compilation system.
+;; it reads a sexp, checks for EOF compiles the sexp, and then 
+;; calls do-compile-task with a function that will call compiler-run
+;; again and then return the delayed work.  If EOF is found, an END
+;; instruction is written and the delayed work finally gets evaluated.
+(define compiler-run 
+  (lambda ()
+    (let ((sp (read-sexp)))
+      (if sp
+	  (let ((r (compile-sexp sp top-level-env #t #f)))
+	    (do-compile-task 
+	     (lambda () 
+	       (compiler-run) 
+	       r)))
+	  (begin
+	    (append-instruction ins-end))))))
+
+;;
+;; Output preamble stuff, run the compiler, output the initial
+;; environment
+;;
 (append-instructions 
  ins-push (asm-label-reference initial-env-label) ins-wtrr)
 (compiler-run)
